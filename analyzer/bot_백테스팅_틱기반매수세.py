@@ -37,7 +37,8 @@ _T_최소거래대금 = float(os.environ.get('TB_MINVALUE', '5000'))  # 전일 �
 _T_최소가격 = float(os.environ.get('TB_MINPRICE', '1000'))     # 전일 종가 하한 (원, 저가주 제외)
 # 자금관리 (실시간매매 bot_실시간매매와 동일: 총자산 균등 사이징 + 리스크 한계)
 _T_초기예수금 = int(os.environ.get('TB_INITCASH', '10000000'))  # 백테스팅 시작 예수금 (원, 실매매는 계좌 조회)
-_T_분할수 = int(os.environ.get('TB_DIVISOR', '5'))             # 총자산 균등 분할 수 (진입당 매수금액 = 총자산 / 분할수)
+_T_분할수 = int(os.environ.get('TB_DIVISOR', '3'))             # 총자산 균등 분할 수 (진입당 매수금액 = 총자산 / 분할수)
+#                                                              5→3: 실시간매매(_T_분할수=3)와 정합 - 백테가 계좌수익을 과소평가(동일거래 8.4% vs 14.3%)했음
 _T_리스크캡 = float(os.environ.get('TB_RISKCAP', '1.0'))       # 거래당 리스크 한계 (총자본 %) - 손절 깊을 때만 실효(임계=분할수×리스크캡%)
 
 
