@@ -46,6 +46,8 @@ _G1_손절 = float(os.environ.get('TB_G1STOP', '1.5'))         # 손절 %
 _G1_최대보유 = int(os.environ.get('TB_G1HOLD', '1800'))       # 최대 보유 (초)
 _G1_쿨다운 = int(os.environ.get('TB_G1COOL', '180'))          # 청산 후 재진입 대기 (초)
 _G1_일최대 = int(os.environ.get('TB_G1MAX', '2'))             # 종목당 구간1 최대 진입 횟수
+_G1_매수호가 = int(os.environ.get('TB_G1TICKUP', '5'))         # 구간1 매수 지정가 = 현재가 + N호가 (구간2는 _T_매수호가=3)
+#                                                              구간1은 체결 폭증 한복판 진입이라 호가가 빠르게 밀림 → 더 공격적으로 잡아 미체결 방지
 # 종목선정 (전일 일봉 기준)
 _T_최소거래대금 = float(os.environ.get('TB_MINVALUE', '5000'))  # 전일 거래대금 하한 (백만원)
 _T_최소가격 = float(os.environ.get('TB_MINPRICE', '1000'))     # 전일 종가 하한 (원)
@@ -184,10 +186,10 @@ class TraderBot:
             return 500
         return 1000
 
-    def _매수단가(self, n_현재가):
+    def _매수단가(self, n_현재가, n_호가수=None):
         """ 매수 지정가 = 현재가 + N호가 (호가 경계마다 단위 재계산하며 한 틱씩 상승) """
         n_단가 = int(n_현재가)
-        for _ in range(_T_매수호가):
+        for _ in range(_T_매수호가 if n_호가수 is None else n_호가수):
             n_단가 += self._호가단위(n_단가)
         return n_단가
 
@@ -494,7 +496,8 @@ class TraderBot:
             지정가는 증거금을 주문단가(현재가+N호가) 기준으로 잡아, 매수금액÷매수단가 수량이 그대로
             주문 가능 → 축소폭 최소화 + 증거금 부족 회피. 현재가보다 N호가 높여 즉시 체결 확률 확보 """
         # 주문수량 산정 - 매수단가(현재가+N호가) 기준 (배분금액·예수금 중 작은 쪽 ÷ 매수단가)
-        n_매수단가 = self._매수단가(n_현재가)
+        n_호가수 = _G1_매수호가 if s_구간 == '구간1' else _T_매수호가
+        n_매수단가 = self._매수단가(n_현재가, n_호가수=n_호가수)
         n_매수금액, n_예수금 = self._calc_매수금액()
         n_수량 = int(min(n_매수금액, n_예수금) // n_매수단가) if n_매수단가 > 0 else 0
         if n_수량 < 1:
@@ -517,7 +520,7 @@ class TraderBot:
             else:
                 dic_포지션['진입횟수'] += 1
             self.make_로그(f'매수주문[{s_구간}] - {self._lbl(s_종목코드)} '
-                         f'{n_수량}주 @{n_매수단가:,}원 (현재가 {n_현재가:,}+{_T_매수호가}호가, '
+                         f'{n_수량}주 @{n_매수단가:,}원 (현재가 {n_현재가:,}+{n_호가수}호가, '
                          f'약 {n_수량 * n_매수단가:,}원, IOC지정가)')
             self._save_포지션()
         else:
