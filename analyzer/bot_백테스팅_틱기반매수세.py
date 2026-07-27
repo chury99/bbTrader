@@ -46,6 +46,10 @@ _G1_손절 = float(os.environ.get('TB_G1STOP', '1.5'))         # 손절 %
 _G1_최대보유 = int(os.environ.get('TB_G1HOLD', '1800'))       # 최대 보유 (초)
 _G1_쿨다운 = int(os.environ.get('TB_G1COOL', '180'))          # 청산 후 재진입 대기 (초)
 _G1_일최대 = int(os.environ.get('TB_G1MAX', '2'))             # 종목당 구간1 최대 진입 횟수
+_G1_분할수 = int(os.environ.get('TB_G1DIVISOR', '4'))          # 구간1 전용 분할 수 (구간2는 _T_분할수=3)
+#                                                              구간1은 09:00~09:10에 신호가 몰리고 평균보유 347초라 서로 겹침.
+#                                                              자본무관 최대 동시보유가 4종목인데 3분할이면 4번째가 잔돈으로만 체결됨
+#                                                              (실측: 07/20 기가레인 목표 337만→4.9만(1%), 07/23 한울반도체 404만→11.8만(3%) - 둘 다 큰 승자)
 # 공통
 _T_비용 = float(os.environ.get('TB_COST', '0.35'))           # 왕복 거래비용 % (수수료+세금+슬리피지)
 _T_차트최대 = int(os.environ.get('TB_CHARTMAX', '30'))        # 매매일보 개별 거래차트 최대 수
@@ -353,7 +357,7 @@ class AnalyzerBot:
     def _simulate_예수금(self, df_누적거래):
         """ 전체 거래를 시간순 재생하여 총자산 균등 사이징 적용 (실시간매매 bot_실시간매매와 동일 규칙)
             - 총자본   = 예수금(현금) + 보유중 매수금액 합
-            - 목표금액 = 총자본 ÷ 분할수(5)              : 진입마다 총자산의 1/5 균등 배분
+            - 목표금액 = 총자본 ÷ 분할수 (구간1=4 / 구간2=3) : 진입마다 총자산의 균등 배분
             - 리스크캡 = 총자본 × 리스크캡%(1%) ÷ 손절률% : 손절 시 손실이 총자본의 1% 이내
             - 매수금액 = min(목표금액, 리스크캡, 예수금)  : 균등배분/리스크한계/가용현금 중 최소
             - 예수금은 일자를 넘어 이월(복리). 청산 시 원금+손익 회수 후 다음 진입 사이징에 반영
@@ -368,6 +372,8 @@ class AnalyzerBot:
         ary_매도시점 = df['매도시점'].astype(str).values
         ary_매수가 = df['매수가'].astype(float).values
         ary_수익률 = df['수익률'].astype(float).values
+        ary_구간 = (df['구간'].astype(str).values if '구간' in df.columns
+                  else np.full(len(df), '구간2'))     # 구간 컬럼 없는 과거 기록 호환
 
         ary_수량 = np.zeros(n, dtype='int64')
         ary_매수금액 = np.zeros(n, dtype='int64')
@@ -391,7 +397,8 @@ class AnalyzerBot:
             # 총자산 균등 사이징 + 리스크 한계
             n_매수가 = ary_매수가[i]
             n_총자본 = n_예수금 + sum(a for _, a, _ in li_오픈)          # 현금 + 보유중 매수금액
-            n_목표금액 = n_총자본 / _T_분할수 if _T_분할수 > 0 else n_총자본
+            n_분할수 = _G1_분할수 if ary_구간[i] == '구간1' else _T_분할수
+            n_목표금액 = n_총자본 / n_분할수 if n_분할수 > 0 else n_총자본
             n_리스크캡 = n_총자본 * _T_리스크캡 / 100 / (_T_손절 / 100) if _T_손절 > 0 else n_목표금액
             n_매수금액한도 = min(n_목표금액, n_리스크캡, n_예수금)         # 균등배분/리스크한계/가용현금
             n_수량 = int(n_매수금액한도 // n_매수가) if n_매수가 > 0 else 0
