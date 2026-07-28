@@ -86,8 +86,7 @@ class FileManager:
         # 메인폴더별 파일 탐색
         for s_메인폴더, s_보관기간 in dic_보관기간.items():
             # 대상폴더 탐색
-            s_폴더명 = s_메인폴더 if s_메인폴더 != '로그' else 'folder_log'
-            li_하위폴더 = self._find_하위폴더(s_기준폴더=s_폴더명, b_전체폴더명=True)
+            li_하위폴더 = self._find_하위폴더(s_기준폴더=s_메인폴더, b_전체폴더명=True)
             li_대상폴더 = [폴더 for 폴더 in li_하위폴더 if 폴더 not in li_제외폴더]
 
             # 폴더별 삭제대상 파일 탐색

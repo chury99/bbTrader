@@ -1,56 +1,38 @@
 {
-    "folder_work" : {
-        "mac" : "매매·분석 산출물 보관 폴더 (용량 큼, 외장 디스크 권장)",
-        "win" : "E:/ProjectWork/bbTrader_claude"
+    "folder_work": {
+        "mac": "매매·분석 산출물 보관 폴더 (용량 큼, 외장 디스크 권장)",
+        "win": "E:/ProjectWork/bbTrader_claude"
     },
-    "folder_log" : {
-        "mac" : "로그 보관 폴더",
-        "win" : "C:/Users/user/iCloudDrive/python_log"
+    "folder_log": {
+        "mac": "로그 보관 폴더",
+        "win": "C:/Users/user/iCloudDrive/python_log"
     },
-    "folder_kakao" : {
-        "mac" : "카카오 알림 모듈(API_kakao.py) 이 있는 폴더",
-        "win" : "C:/Users/user/PycharmProjects/api-kakao"
+    "folder_kakao": {
+        "mac": "카카오 알림 모듈(API_kakao.py) 이 있는 폴더",
+        "win": "C:/Users/user/PycharmProjects/api-kakao"
     },
-    "folder_kiwoom" : {
-        "mac" : "이 저장소의 xapi 폴더 경로 (sys.path 등록용)",
-        "win" : "C:/Users/user/PycharmProjects/bbTrader_claude/xapi"
+    "folder_kiwoom": {
+        "mac": "이 저장소의 xapi 폴더 경로 (sys.path 등록용)",
+        "win": "C:/Users/user/PycharmProjects/bbTrader_claude/xapi"
     },
-    "folder_aikey" : {
-        "mac" : "이 저장소의 xconfig 폴더 경로",
-        "win" : "C:/Users/user/PycharmProjects/bbTrader_claude/xconfig"
+    "로그이름_trader": "bb_trader",
+    "로그이름_analyzer": "bb_analyzer",
+    "로그이름_rotator": "bb_trader",
+    "로그이름_error": "bb_error",
+    "파일보관기간(일)_analyzer": {
+        "mac": "30",
+        "win": "180"
     },
-    "path_파이썬" : {
-        "mac" : "가상환경 파이썬 실행파일 경로",
-        "win" : "C:/Python313-64/python.exe"
+    "파일보관기간(일)_collector": {
+        "mac": "30",
+        "win": "180"
     },
-    "로그이름_trader" : "bb_trader",
-    "로그이름_collector" : "bb_collector",
-    "로그이름_analyzer" : "bb_analyzer",
-    "로그이름_rotator" : "bb_trader",
-    "로그이름_error" : "bb_error",
-    "파일보관기간(일)_log" : {
-        "mac" : "365",
-        "win" : "365"
+    "파일보관기간(일)_trader": {
+        "mac": "30",
+        "win": "180"
     },
-    "파일보관기간(일)_analyzer" : {
-        "mac" : "30",
-        "win" : "180"
-    },
-    "파일보관기간(일)_collector" : {
-        "mac" : "30",
-        "win" : "180"
-    },
-    "파일보관기간(일)_trader" : {
-        "mac" : "30",
-        "win" : "180"
-    },
-    "재구동_대기시간(초)" : "5",
-    "계좌번호" : "키움 계좌번호 - kiwoomKey.json 의 최상위 키와 동일하게",
-    "서버구분" : "실서버",
-    "거래소구분" : "KRX",
-    "시작시각" : "08:50:00",
-    "종료시각" : "15:35:00",
-    "자본금(원)" : "10,000,000",
-    "익절수익률" : "9",
-    "손절수익률" : "3"
+    "계좌번호": "키움 계좌번호 - kiwoomKey.json 의 최상위 키와 동일하게",
+    "서버구분": "실서버",
+    "거래소구분": "KRX",
+    "종료시각": "15:35:00"
 }
