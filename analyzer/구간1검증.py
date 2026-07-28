@@ -31,17 +31,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ut
 
 # ===== 고정 파라미터 (변경 금지) =====
-_G1_시작, _G1_종료 = 9 * 3600, 9 * 3600 + 600      # 09:00 ~ 09:10
-_R = 7.0             # 초당 매수 체결 횟수 하한 (10초 창, 절대)
+_구간1_시작, _구간1_종료 = 9 * 3600, 9 * 3600 + 600      # 09:00 ~ 09:10
+_체결률하한 = 7.0             # 초당 매수 체결 횟수 하한 (10초 창, 절대)
 _순매수하한 = 0.5      # 60초 순매수비율 하한
-_창 = 10             # 체결률 산출 창 (초)
-_상승창 = 10          # 단가 상승 판정 (N초 전 대비)
+_산출창 = 10             # 체결률 산출 창 (초)
+_상승판정창 = 10          # 단가 상승 판정 (N초 전 대비)
 _트레일 = 2.0         # 트레일링 스탑 % (보유중 고점 대비)
 _손절 = 1.5           # 손절 %
 _최대보유 = 1800       # 최대 보유 (초)
 _쿨다운 = 180         # 청산 후 재진입 대기 (초)
 _일최대 = 2           # 종목당 1일 최대 진입
-_비용 = 0.35          # 왕복 거래비용 %
+_비용 = 0.35          # 왕복 거래비용 % (수수료+세금)
+_매수슬립 = 0.20       # 진입 체결 슬리피지 % (백테스팅 _T_매수슬립과 동일 - 실전 대조 기반)
+_매도슬립 = 0.15       # 청산 체결 슬리피지 % (백테스팅 _T_매도슬립과 동일)
 _단주 = 2            # |틱거래량| <= 값이면 제외 (1·2주)
 _개발표본_종료 = '20260724'   # 이 날짜까지가 로직 개발에 쓰인 표본(=in-sample)
 _틱시작일 = '20260716'
@@ -51,7 +53,7 @@ _최소거래대금, _최소가격 = 5000.0, 1000.0
 
 
 # noinspection NonAsciiCharacters,PyPep8Naming,SpellCheckingInspection
-class G1Validator:
+class 구간1Validator:
     """ 구간1 로직 일일 홀드아웃 검증 """
 
     def __init__(self):
@@ -147,14 +149,14 @@ class G1Validator:
         """ 진입/청산 시뮬 (고정 파라미터) """
         s, p = a['s'], a['price']
         n = len(s)
-        매수율 = pd.Series(a['매수건']).rolling(_창).sum().values / _창
-        순비율 = ((pd.Series(a['매수량'] - a['매도량']).rolling(_창).sum())
-                 / pd.Series(a['매수량'] + a['매도량']).rolling(_창).sum().replace(0, np.nan)).values
+        매수율 = pd.Series(a['매수건']).rolling(_산출창).sum().values / _산출창
+        순비율 = ((pd.Series(a['매수량'] - a['매도량']).rolling(_산출창).sum())
+                 / pd.Series(a['매수량'] + a['매도량']).rolling(_산출창).sum().replace(0, np.nan)).values
         상승 = np.full(n, False)
-        if n > _상승창:
-            상승[_상승창:] = p[_상승창:] > p[:-_상승창]
-        ent = ((매수율 >= _R) & 상승 & (np.nan_to_num(순비율, nan=-9) >= _순매수하한)
-               & (s >= _G1_시작) & (s < _G1_종료))
+        if n > _상승판정창:
+            상승[_상승판정창:] = p[_상승판정창:] > p[:-_상승판정창]
+        ent = ((매수율 >= _체결률하한) & 상승 & (np.nan_to_num(순비율, nan=-9) >= _순매수하한)
+               & (s >= _구간1_시작) & (s < _구간1_종료))
         ent = np.nan_to_num(ent, nan=False).astype(bool)
         idx = np.where(ent)[0]
 
@@ -164,7 +166,7 @@ class G1Validator:
             if pos >= len(idx):
                 break
             e = int(idx[pos])
-            n_매수가 = p[e]
+            n_매수가 = p[e] * (1 + _매수슬립 / 100)      # 진입 체결 슬리피지
             n_손절가 = n_매수가 * (1 - _손절 / 100)
             n_피크 = n_매수가
             i_청산, s_사유, n_스탑가 = None, None, n_손절가
@@ -182,7 +184,9 @@ class G1Validator:
                     break
             if i_청산 is None:
                 i_청산, s_사유 = i_끝, '보유초과'
-            n_매도가 = n_스탑가 if s_사유 in ('손절', '트레일') else p[i_청산]
+            # 청산가: 스탑을 터치한 그 초의 실제 가격은 이미 스탑 아래 → 둘 중 낮은 쪽 (백테스팅과 동일 관례)
+            n_매도가 = (min(n_스탑가, p[i_청산]) if s_사유 in ('손절', '트레일') else p[i_청산])
+            n_매도가 *= (1 - _매도슬립 / 100)          # 청산 체결 슬리피지
             li.append(dict(일자=s_일자, 종목코드=s_종목코드, 종목명=s_종목명,
                            매수시각=int(s[e]), 매도시각=int(s[i_청산]),
                            매수가=float(n_매수가), 매도가=float(n_매도가),
@@ -247,7 +251,7 @@ class G1Validator:
         L = []
         L.append('=' * 78)
         L.append('구간1(09:00~09:10) 흐름추종 — 일일 홀드아웃 검증')
-        L.append(f'고정 파라미터: 체결률>={_R}/초(창{_창}s) · 순매수>={_순매수하한} · 단가상승{_상승창}s'
+        L.append(f'고정 파라미터: 체결률>={_체결률하한}/초(창{_산출창}s) · 순매수>={_순매수하한} · 단가상승{_상승판정창}s'
                  f' · 트레일{_트레일}% · 손절{_손절}% · 최대보유{_최대보유}s · 일최대{_일최대}')
         L.append('=' * 78)
         if df is None or len(df) == 0:
@@ -312,7 +316,7 @@ class G1Validator:
 
 def run():
     """ 실행 함수 """
-    G1Validator().run(rebuild='--rebuild' in sys.argv)
+    구간1Validator().run(rebuild='--rebuild' in sys.argv)
 
 
 if __name__ == '__main__':

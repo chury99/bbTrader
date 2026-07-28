@@ -33,25 +33,32 @@ _T_최대보유 = int(os.environ.get('TB_MAXHOLD', '3600'))       # 최대 보�
 # 구간2(현행 눌림매매)는 개장초에 구조적으로 진입 불가(당일고가 미형성 → 이격률 평균 2.8% < 요구 5%,
 # 상대지표 기준선도 개장초엔 이미 높음). 6일 전수 재생상 09:00~09:30 구간2 신호 0건.
 # 반면 개장초는 기회 밀도가 2~3배(유리율 10.85% vs 종일 3.5~5.5%) → 전용 로직으로 분리 (2026-07-27)
-_G1_사용 = os.environ.get('TB_G1', '1') == '1'               # 구간1 로직 사용 여부 (0=기존 동작)
-_G1_종료 = int(os.environ.get('TB_G1END', '600'))            # 구간1 종료 (09:00 기준 초, 600=09:10)
-_G1_체결률 = float(os.environ.get('TB_G1RATE', '7.0'))        # 유효 매수 체결 횟수 하한 (초당, 10초창, 절대기준)
+_구간1_사용 = os.environ.get('TB_G1', '1') == '1'               # 구간1 로직 사용 여부 (0=기존 동작)
+_구간1_종료 = int(os.environ.get('TB_G1END', '600'))            # 구간1 종료 (09:00 기준 초, 600=09:10)
+_구간1_체결률 = float(os.environ.get('TB_G1RATE', '7.0'))        # 유효 매수 체결 횟수 하한 (초당, 10초창, 절대기준)
 #                                                              절대값인 이유: 개장초엔 상대(직전5분) 기준선 자체가 높아 서지가 안 잡힘
-_G1_순매수 = float(os.environ.get('TB_G1RATIO', '0.5'))       # 순매수비율 하한 (체결률과 동일한 10초창)
-_G1_창 = int(os.environ.get('TB_G1WIN', '10'))               # 체결률·순매수 산출 창 (초)
-_G1_상승창 = int(os.environ.get('TB_G1UP', '10'))             # 단가 상승 판정 (N초 전 대비)
-_G1_트레일 = float(os.environ.get('TB_G1TRAIL', '2.0'))       # 트레일링 스탑 % - 매수세 소멸 청산보다 우수함이 검증됨
+_구간1_순매수 = float(os.environ.get('TB_G1RATIO', '0.5'))       # 순매수비율 하한 (체결률과 동일한 10초창)
+_구간1_창 = int(os.environ.get('TB_G1WIN', '10'))               # 체결률·순매수 산출 창 (초)
+_구간1_상승창 = int(os.environ.get('TB_G1UP', '10'))             # 단가 상승 판정 (N초 전 대비)
+_구간1_트레일 = float(os.environ.get('TB_G1TRAIL', '2.0'))       # 트레일링 스탑 % - 매수세 소멸 청산보다 우수함이 검증됨
 #                                                              (매수세는 서지 직후 꺾이나 가격 추세는 지속 → 평균보유 68초→347초, 평균수익 +2.24%→+3.35%)
-_G1_손절 = float(os.environ.get('TB_G1STOP', '1.5'))         # 손절 %
-_G1_최대보유 = int(os.environ.get('TB_G1HOLD', '1800'))       # 최대 보유 (초)
-_G1_쿨다운 = int(os.environ.get('TB_G1COOL', '180'))          # 청산 후 재진입 대기 (초)
-_G1_일최대 = int(os.environ.get('TB_G1MAX', '2'))             # 종목당 구간1 최대 진입 횟수
-_G1_분할수 = int(os.environ.get('TB_G1DIVISOR', '4'))          # 구간1 전용 분할 수 (구간2는 _T_분할수=3)
+_구간1_손절 = float(os.environ.get('TB_G1STOP', '1.5'))         # 손절 %
+_구간1_최대보유 = int(os.environ.get('TB_G1HOLD', '1800'))       # 최대 보유 (초)
+_구간1_쿨다운 = int(os.environ.get('TB_G1COOL', '180'))          # 청산 후 재진입 대기 (초)
+_구간1_일최대 = int(os.environ.get('TB_G1MAX', '2'))             # 종목당 구간1 최대 진입 횟수
+_구간1_분할수 = int(os.environ.get('TB_G1DIVISOR', '4'))          # 구간1 전용 분할 수 (구간2는 _T_분할수=3)
 #                                                              구간1은 09:00~09:10에 신호가 몰리고 평균보유 347초라 서로 겹침.
 #                                                              자본무관 최대 동시보유가 4종목인데 3분할이면 4번째가 잔돈으로만 체결됨
 #                                                              (실측: 07/20 기가레인 목표 337만→4.9만(1%), 07/23 한울반도체 404만→11.8만(3%) - 둘 다 큰 승자)
 # 공통
-_T_비용 = float(os.environ.get('TB_COST', '0.35'))           # 왕복 거래비용 % (수수료+세금+슬리피지)
+_T_비용 = float(os.environ.get('TB_COST', '0.35'))           # 왕복 거래비용 % (수수료+세금)
+_T_매수슬립 = float(os.environ.get('TB_BUYSLIP', '0.20'))     # 진입 체결 슬리피지 % (실측 반영)
+#                                                              백테는 완결초 종가로 진입하나 실매매는 그 다음 틱 가격으로 주문 → 상승 국면에선 체계적으로 불리
+_T_매도슬립 = float(os.environ.get('TB_SELLSLIP', '0.15'))    # 청산 체결 슬리피지 % (실측 반영)
+#                                                              2026-07-28 실전 6건 실측 분해:
+#                                                                스탑레벨 → 그 초 실제가  -0.13%p (아래 매도가 산출로 구조적 해소)
+#                                                                그 초 실제가 → 실제 체결  -0.15%p (주문 체결 슬리피지 = 이 파라미터)
+#                                                              실매매 매도를 IOC지정가(현재가-5호가)로 전환했으므로 재실측 후 조정 필요
 _T_차트최대 = int(os.environ.get('TB_CHARTMAX', '30'))        # 매매일보 개별 거래차트 최대 수
 # 종목선정 (전일 일봉 기준)
 _T_최소거래대금 = float(os.environ.get('TB_MINVALUE', '5000'))  # 전일 거래대금 하한 (백만원, 5000=50억)
@@ -397,7 +404,7 @@ class AnalyzerBot:
             # 총자산 균등 사이징 + 리스크 한계
             n_매수가 = ary_매수가[i]
             n_총자본 = n_예수금 + sum(a for _, a, _ in li_오픈)          # 현금 + 보유중 매수금액
-            n_분할수 = _G1_분할수 if ary_구간[i] == '구간1' else _T_분할수
+            n_분할수 = _구간1_분할수 if ary_구간[i] == '구간1' else _T_분할수
             n_목표금액 = n_총자본 / n_분할수 if n_분할수 > 0 else n_총자본
             n_리스크캡 = n_총자본 * _T_리스크캡 / 100 / (_T_손절 / 100) if _T_손절 > 0 else n_목표금액
             n_매수금액한도 = min(n_목표금액, n_리스크캡, n_예수금)         # 균등배분/리스크한계/가용현금
@@ -547,28 +554,28 @@ class AnalyzerBot:
         df_1초['덩어리배수'] = df_1초['최대매수틱'].rolling(60).max() / sri_평균틱.replace(0, np.nan)
 
         # 구간1 지표 (개장 09:00~09:10) - 전부 절대기준·짧은 창이라 웜업 불필요 (10초면 성립)
-        n_구간1시작, n_구간1종료 = 9 * 3600, 9 * 3600 + _G1_종료
+        n_구간1시작, n_구간1종료 = 9 * 3600, 9 * 3600 + _구간1_종료
         df_1초['매수틱수'] = df_매수틱.groupby('초').size().reindex(ary_초).fillna(0)      # 유효 매수 체결 '건수'
-        df_1초['G1체결률'] = df_1초['매수틱수'].rolling(_G1_창).sum() / _G1_창             # 초당 매수 체결 횟수
-        df_1초['G1순매수'] = ((df_1초['매수량'] - df_1초['매도량']).rolling(_G1_창).sum()
-                          / sri_전체.rolling(_G1_창).sum().replace(0, np.nan))
-        df_1초['G1상승'] = df_1초['price'] > df_1초['price'].shift(_G1_상승창)
+        df_1초['구간1체결률'] = df_1초['매수틱수'].rolling(_구간1_창).sum() / _구간1_창             # 초당 매수 체결 횟수
+        df_1초['구간1순매수'] = ((df_1초['매수량'] - df_1초['매도량']).rolling(_구간1_창).sum()
+                          / sri_전체.rolling(_구간1_창).sum().replace(0, np.nan))
+        df_1초['구간1상승'] = df_1초['price'] > df_1초['price'].shift(_구간1_상승창)
 
         # 신호 마스크 (벡터) - 절대거래량 바닥(전체60>=_T_최소거래량) 추가로 얇은종목 흔들림 배제
         # 체결속도 하한: 큰상승은 중간크기 매수의 빠른 연속 / 덩어리배수 상한: 단일 대형블록 주도는 미끼성 -> 배제
         # 구간2는 구간1 종료 이후로 게이트 (구간1과 시간대 분리 - 전수재생상 09:30 이전 신호 0건이라 결과 불변)
         n_웜업 = ary_초[0] + 360
-        n_구간2시작 = n_구간1종료 if _G1_사용 else 0
+        n_구간2시작 = n_구간1종료 if _구간1_사용 else 0
         ary_진입 = ((df_1초['순매수비율'] > _T_순매수비율) & (df_1초['거래강도'] > _T_거래강도)
                   & (df_1초['전체60'] >= _T_최소거래량)
                   & (df_1초['체결속도'] >= _T_체결속도) & (df_1초['덩어리배수'] <= _T_덩어리상한)
                   & (df_1초.index > n_웜업) & (df_1초.index < self.n_장마감초)
                   & (df_1초.index >= n_구간2시작)
                   & (df_1초['이격률'] >= _T_이격최소) & (df_1초['이격률'] < _T_이격최대)).fillna(False).values
-        ary_진입_G1 = (((df_1초['G1체결률'] >= _G1_체결률) & df_1초['G1상승']
-                      & (df_1초['G1순매수'] >= _G1_순매수)
+        ary_진입_구간1 = (((df_1초['구간1체결률'] >= _구간1_체결률) & df_1초['구간1상승']
+                      & (df_1초['구간1순매수'] >= _구간1_순매수)
                       & (df_1초.index >= n_구간1시작) & (df_1초.index < n_구간1종료)).fillna(False).values
-                     if _G1_사용 else np.zeros(len(ary_초), dtype=bool))
+                     if _구간1_사용 else np.zeros(len(ary_초), dtype=bool))
         ary_가격 = df_1초['price'].values
         ary_변동폭 = df_1초['변동폭300'].values
 
@@ -577,26 +584,26 @@ class AnalyzerBot:
         li_dic거래 = list()
         n_길이 = len(ary_초)
         idx_진입후보 = np.where(ary_진입)[0]
-        idx_진입후보_G1 = np.where(ary_진입_G1)[0]
+        idx_진입후보_구간1 = np.where(ary_진입_구간1)[0]
         i = 0
-        n_횟수_G1, n_횟수_G2 = 0, 0
+        n_횟수_구간1, n_횟수_구간2 = 0, 0
         while True:
             # 다음 진입 시점 (구간1/구간2 중 먼저 오는 쪽, 각 구간별 일최대 횟수 준수)
-            i_G1 = (int(idx_진입후보_G1[np.searchsorted(idx_진입후보_G1, i)])
-                    if n_횟수_G1 < _G1_일최대 and np.searchsorted(idx_진입후보_G1, i) < len(idx_진입후보_G1)
+            i_구간1 = (int(idx_진입후보_구간1[np.searchsorted(idx_진입후보_구간1, i)])
+                    if n_횟수_구간1 < _구간1_일최대 and np.searchsorted(idx_진입후보_구간1, i) < len(idx_진입후보_구간1)
                     else n_길이)
-            i_G2 = (int(idx_진입후보[np.searchsorted(idx_진입후보, i)])
-                    if n_횟수_G2 < _T_일최대거래 and np.searchsorted(idx_진입후보, i) < len(idx_진입후보)
+            i_구간2 = (int(idx_진입후보[np.searchsorted(idx_진입후보, i)])
+                    if n_횟수_구간2 < _T_일최대거래 and np.searchsorted(idx_진입후보, i) < len(idx_진입후보)
                     else n_길이)
-            if min(i_G1, i_G2) >= n_길이:
+            if min(i_구간1, i_구간2) >= n_길이:
                 break
-            b_구간1 = i_G1 <= i_G2
-            i_진입 = i_G1 if b_구간1 else i_G2
-            n_손절률 = _G1_손절 if b_구간1 else _T_손절
-            n_트레일률 = _G1_트레일 if b_구간1 else _T_트레일
-            n_최대보유 = _G1_최대보유 if b_구간1 else _T_최대보유
-            n_쿨다운 = _G1_쿨다운 if b_구간1 else _T_쿨다운
-            n_매수가 = ary_가격[i_진입]
+            b_구간1 = i_구간1 <= i_구간2
+            i_진입 = i_구간1 if b_구간1 else i_구간2
+            n_손절률 = _구간1_손절 if b_구간1 else _T_손절
+            n_트레일률 = _구간1_트레일 if b_구간1 else _T_트레일
+            n_최대보유 = _구간1_최대보유 if b_구간1 else _T_최대보유
+            n_쿨다운 = _구간1_쿨다운 if b_구간1 else _T_쿨다운
+            n_매수가 = ary_가격[i_진입] * (1 + _T_매수슬립 / 100)      # 진입 체결 슬리피지
             n_손절가 = n_매수가 * (1 - n_손절률 / 100)
 
             # 청산 시점 탐색 (벡터): 스탑 터치(고정손절/고점대비 트레일링 중 최고) / 보유초과 / 장마감 중 최선
@@ -623,7 +630,11 @@ class AnalyzerBot:
                 i_청산 = i_시작 + i_청산상대
                 s_사유 = (('손절터치' if ary_스탑[i_스탑] == n_손절가 else '트레일청산') if i_청산상대 == i_스탑 else
                         '보유초과' if i_청산상대 == i_보유초과 else '타임아웃')
-            n_매도가 = ary_스탑[i_청산상대] if s_사유 in ['손절터치', '트레일청산'] else ary_가격[i_청산]
+            # 청산 체결가: 스탑을 터치한 그 초의 실제 가격은 이미 스탑 레벨 아래이므로 둘 중 낮은 쪽이 현실적
+            # (기존처럼 스탑 레벨 체결로 보면 실전 대비 평균 0.13%p 낙관 - 2026-07-28 실측)
+            n_매도가 = (min(ary_스탑[i_청산상대], ary_가격[i_청산])
+                     if s_사유 in ['손절터치', '트레일청산'] else ary_가격[i_청산])
+            n_매도가 *= (1 - _T_매도슬립 / 100)      # 주문 체결 슬리피지
 
             # MFE/MAE (벡터 슬라이스)
             ary_보유 = ary_가격[i_진입:i_청산 + 1]
@@ -650,9 +661,9 @@ class AnalyzerBot:
 
             # 다음 탐색 시작 (쿨다운)
             if b_구간1:
-                n_횟수_G1 += 1
+                n_횟수_구간1 += 1
             else:
-                n_횟수_G2 += 1
+                n_횟수_구간2 += 1
             i = i_청산 + n_쿨다운
 
         return pd.DataFrame(li_dic거래)
