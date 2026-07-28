@@ -87,30 +87,32 @@ analyzer/
 
 ut/                      공용 (폴더·로그·차트·도구 매니저)
 xapi/                    키움 REST/WebSocket API 래퍼
+xconfig/                 ★ 손으로 채워야 하는 설정파일 모음 (아래 「최초 설정」 참조)
 ```
 
 ## 3. 실행
 
-### 최초 설정 — 인증정보
+### 최초 설정 — `xconfig/`
 
-인증정보는 저장소에 올리지 않는다(`.gitignore`). 대신 양식만 `.example` 로 올려두었으니,
-확장자를 떼어 복사한 뒤 실제 값을 채운다.
+**손으로 채워야 하는 파일은 전부 `xconfig/` 한 곳에 모여 있다.** 인증정보는 저장소에 올리지 않으므로
+(`.gitignore`) 양식만 `.example` 로 올려두었다. 확장자를 떼어 복사한 뒤 실제 값을 채운다.
 
 ```bash
-cp server_info.json.example server_info.json
+cp xconfig/server_info.json.example xconfig/server_info.json
 ```
 ```bash
-cp xapi/kiwoomKey.json.example xapi/kiwoomKey.json
+cp xconfig/kiwoomKey.json.example xconfig/kiwoomKey.json
 ```
 
-| 파일 | 내용 |
-|---|---|
-| `server_info.json` | 백업·차트 업로드용 sftp 접속정보와 서버 폴더 경로 |
-| `xapi/kiwoomKey.json` | 키움 오픈API 앱키·시크릿키. **최상위 키는 계좌번호**이며 `config.json` 의 `계좌번호` 와 일치해야 한다 |
-| `xapi/kiwoomToken.json` | 접근토큰. 최초 구동 시 자동 생성·갱신되므로 직접 만들 필요 없다 |
+| 파일 | 추적 | 내용 |
+|---|---|---|
+| `xconfig/config.json` | O | 경로·운영 설정. 인증정보가 아니라 저장소에 포함된다. 다른 머신이면 `folder_work` 등 mac/win 경로를 자기 환경에 맞게 고친다 |
+| `xconfig/kiwoomKey.json` | X | 키움 오픈API 앱키·시크릿키. **최상위 키는 계좌번호**이며 `config.json` 의 `계좌번호` 와 일치해야 한다 |
+| `xconfig/server_info.json` | X | 백업·차트 업로드용 sftp 접속정보와 서버 폴더 경로 |
+| `xconfig/kiwoomToken.json` · `.lock` | X | 접근토큰과 프로세스 락. 최초 구동 시 자동 생성·갱신되므로 직접 만들 필요 없다 |
 
-`config.json` 은 인증정보가 아니라 경로·운영 설정이라 저장소에 포함되어 있다.
-다른 머신에서 돌린다면 `folder_work` 등 mac/win 경로를 자기 환경에 맞게 고친다.
+설정폴더 경로는 `ToolManager.folder_설정` 이 잡아 `config로딩()` 결과에 `folder_설정` 키로 주입한다.
+설정파일을 새로 추가한다면 이 키를 기준으로 읽어야 위치가 한 곳에 유지된다.
 
 ### 구동
 

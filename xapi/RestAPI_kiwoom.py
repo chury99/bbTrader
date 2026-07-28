@@ -30,23 +30,23 @@ class RestAPIkiwoom:
         self.n_요청타임아웃 = 10    # requests 요청 타임아웃 (초) - 네트워크 지연 시 무한 대기 방지
 
         # 토큰 발급
-        folder_키움key = dic_config['folder_kiwoom']
-        self.s_접근토큰 = self.auth_접근토큰갱신(s_키움key폴더=folder_키움key)
+        self.folder_설정 = dic_config['folder_설정']
+        self.s_접근토큰 = self.auth_접근토큰갱신(s_키움key폴더=self.folder_설정)
 
     # noinspection PyTypeChecker
     def auth_접근토큰갱신(self, s_키움key폴더=None):
         """ 저장된 접속토큰 갱신 후 리턴 """
-        # 파일 정보 정의
-        folder_키움key = s_키움key폴더 if s_키움key폴더 is not None else self.folder_베이스
+        # 파일 정보 정의 - 접속키/토큰/락 모두 xconfig 폴더 기준
+        folder_키움key = s_키움key폴더 if s_키움key폴더 is not None else self.folder_설정
         path_접속키 = os.path.join(folder_키움key, 'kiwoomKey.json')
-        path_접근토큰 = os.path.join(self.folder_베이스,'kiwoomToken.json')
+        path_접근토큰 = os.path.join(folder_키움key, 'kiwoomToken.json')
 
         # 접속키 불러오기
         dic_전체키 = json.load(open(path_접속키, mode='rt', encoding='utf-8'))
         dic_접속키 = dic_전체키.get(self.s_계좌번호, dict()) if os.path.exists(path_접속키) else dict()
 
         # 토큰파일 동시 접근 방지 (multiprocessing 환경에서 파일 손상/중복발급 방지)
-        path_락 = os.path.join(self.folder_베이스, 'kiwoomToken.lock')
+        path_락 = os.path.join(folder_키움key, 'kiwoomToken.lock')
         with self._토큰파일락(path_락):
             # 토큰 불러오기
             dic_전체토큰 = json.load(open(path_접근토큰, mode='rt', encoding='utf-8')) if os.path.exists(path_접근토큰) else dict()

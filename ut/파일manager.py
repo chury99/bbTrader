@@ -35,7 +35,7 @@ class FileManager:
         self.dic_config = dic_config
 
         # 서버정보 정의
-        dic_서버정보 = json.load(open(os.path.join(self.folder_프로젝트, 'server_info.json'), mode='rt', encoding='utf-8'))
+        dic_서버정보 = json.load(open(os.path.join(dic_config['folder_설정'], 'server_info.json'), mode='rt', encoding='utf-8'))
         self.dic_서버접속 = dic_서버정보['sftp']
         self.dic_서버폴더 = dic_서버정보['folder']
 

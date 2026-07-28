@@ -1,8 +1,7 @@
-# 인증정보 / 민감정보
-xapi/kiwoomKey.json
-xapi/kiwoomToken.json
-xapi/kiwoomToken.lock
-server_info.json
+# 설정파일 - xconfig 전체를 제외하되 양식(.example)과 config.json 만 추적
+xconfig/*
+!xconfig/*.example
+!xconfig/config.json
 
 # Python 캐시
 __pycache__/

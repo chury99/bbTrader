@@ -13,6 +13,7 @@ class ToolManager:
         # 기준폴더 정의
         self.folder_베이스 = os.path.dirname(os.path.abspath(__file__))
         self.folder_프로젝트 = os.path.dirname(self.folder_베이스)
+        self.folder_설정 = os.path.join(self.folder_프로젝트, 'xconfig')   # 사용자가 채워야 하는 설정파일 모음
 
         # 구동 os 확인
         dic_운영체제 = dict(darwin='mac', win32='win', linux='linux')
@@ -21,7 +22,7 @@ class ToolManager:
     def config로딩(self):
         """ config.json 파일 확인 후 구동 중인 환경에 맞도록 변수 정의 """
         # config 읽어 오기
-        dic_config = json.load(open(os.path.join(self.folder_프로젝트, 'config.json'), mode='rt', encoding='utf-8'))
+        dic_config = json.load(open(os.path.join(self.folder_설정, 'config.json'), mode='rt', encoding='utf-8'))
 
         # 대상항목 확인
         li_대상항목 = [항목 for 항목 in dic_config.keys() if type(dic_config[항목]) == dict]
@@ -29,6 +30,9 @@ class ToolManager:
         # config 정의
         for s_대상항목 in li_대상항목:
             dic_config[s_대상항목] = dic_config[s_대상항목][self.s_운영체제]
+
+        # 설정폴더 경로 주입 - kiwoomKey/server_info 등 나머지 설정파일 위치
+        dic_config['folder_설정'] = self.folder_설정
 
         return dic_config
 
@@ -52,7 +56,7 @@ class ToolManager:
     def sftp파일업로드(self, folder_로컬, s_서버폴더, s_파일명, n_파일보관일수):
         """ sftp 서버 접속 후 해당 파일 업로드 """
         # 서버정보 정의
-        dic_서버정보 = json.load(open(os.path.join(self.folder_프로젝트, 'server_info.json'), mode='rt', encoding='utf-8'))
+        dic_서버정보 = json.load(open(os.path.join(self.folder_설정, 'server_info.json'), mode='rt', encoding='utf-8'))
         dic_서버접속 = dic_서버정보['sftp']
         dic_서버폴더 = dic_서버정보['folder']
 

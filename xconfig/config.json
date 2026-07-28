@@ -16,8 +16,8 @@
         "win" : "C:/Users/user/PycharmProjects/bbTrader_claude/xapi"
     },
     "folder_aikey" : {
-        "mac" : "/Users/chury99/PycharmProjects/bbTrader_claude/xapi",
-        "win" : "C:/Users/user/PycharmProjects/bbTrader_claude/xapi"
+        "mac" : "/Users/chury99/PycharmProjects/bbTrader_claude/xconfig",
+        "win" : "C:/Users/user/PycharmProjects/bbTrader_claude/xconfig"
     },
     "path_파이썬" : {
         "mac" : "/Users/chury99/PycharmProjects/bbTrader_claude/.venv/bin/pyton",
