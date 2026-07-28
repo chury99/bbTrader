@@ -109,10 +109,12 @@ cp xconfig/kiwoomKey.json.example xconfig/kiwoomKey.json
 | `xconfig/config.json` | O | 경로·운영 설정. 인증정보가 아니라 저장소에 포함된다. 다른 머신이면 `folder_work` 등 mac/win 경로를 자기 환경에 맞게 고친다 |
 | `xconfig/kiwoomKey.json` | X | 키움 오픈API 앱키·시크릿키. **최상위 키는 계좌번호**이며 `config.json` 의 `계좌번호` 와 일치해야 한다 |
 | `xconfig/server_info.json` | X | 백업·차트 업로드용 sftp 접속정보와 서버 폴더 경로 |
-| `xconfig/kiwoomToken.json` · `.lock` | X | 접근토큰과 프로세스 락. 최초 구동 시 자동 생성·갱신되므로 직접 만들 필요 없다 |
 
 설정폴더 경로는 `ToolManager.folder_설정` 이 잡아 `config로딩()` 결과에 `folder_설정` 키로 주입한다.
 설정파일을 새로 추가한다면 이 키를 기준으로 읽어야 위치가 한 곳에 유지된다.
+
+> `xapi/kiwoomToken.json` · `.lock` 은 앱키로 발급받아 캐싱하는 **자동생성물**이라 `xconfig/` 가 아니라
+> `xapi/` 에 그대로 둔다. 손댈 일이 없고, 지워도 다음 구동 때 다시 만들어진다.
 
 ### 구동
 

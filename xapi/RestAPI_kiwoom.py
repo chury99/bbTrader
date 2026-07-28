@@ -36,17 +36,17 @@ class RestAPIkiwoom:
     # noinspection PyTypeChecker
     def auth_접근토큰갱신(self, s_키움key폴더=None):
         """ 저장된 접속토큰 갱신 후 리턴 """
-        # 파일 정보 정의 - 접속키/토큰/락 모두 xconfig 폴더 기준
+        # 파일 정보 정의 - 접속키는 설정폴더(xconfig), 토큰/락은 자동생성물이라 xapi 폴더
         folder_키움key = s_키움key폴더 if s_키움key폴더 is not None else self.folder_설정
         path_접속키 = os.path.join(folder_키움key, 'kiwoomKey.json')
-        path_접근토큰 = os.path.join(folder_키움key, 'kiwoomToken.json')
+        path_접근토큰 = os.path.join(self.folder_베이스, 'kiwoomToken.json')
 
         # 접속키 불러오기
         dic_전체키 = json.load(open(path_접속키, mode='rt', encoding='utf-8'))
         dic_접속키 = dic_전체키.get(self.s_계좌번호, dict()) if os.path.exists(path_접속키) else dict()
 
         # 토큰파일 동시 접근 방지 (multiprocessing 환경에서 파일 손상/중복발급 방지)
-        path_락 = os.path.join(folder_키움key, 'kiwoomToken.lock')
+        path_락 = os.path.join(self.folder_베이스, 'kiwoomToken.lock')
         with self._토큰파일락(path_락):
             # 토큰 불러오기
             dic_전체토큰 = json.load(open(path_접근토큰, mode='rt', encoding='utf-8')) if os.path.exists(path_접근토큰) else dict()
