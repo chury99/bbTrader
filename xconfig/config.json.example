@@ -1,26 +1,26 @@
 {
     "folder_work" : {
-        "mac" : "/Volumes/extSSD4tb/WorksIn4tb/bbTrader_claude",
+        "mac" : "매매·분석 산출물 보관 폴더 (용량 큼, 외장 디스크 권장)",
         "win" : "E:/ProjectWork/bbTrader_claude"
     },
     "folder_log" : {
-        "mac" : "/Users/chury99/Library/Mobile Documents/com~apple~CloudDocs/python_log",
+        "mac" : "로그 보관 폴더",
         "win" : "C:/Users/user/iCloudDrive/python_log"
     },
     "folder_kakao" : {
-        "mac" : "/Users/chury99/PycharmProjects/api-kakao",
+        "mac" : "카카오 알림 모듈(API_kakao.py) 이 있는 폴더",
         "win" : "C:/Users/user/PycharmProjects/api-kakao"
     },
     "folder_kiwoom" : {
-        "mac" : "/Users/chury99/PycharmProjects/bbTrader_claude/xapi",
+        "mac" : "이 저장소의 xapi 폴더 경로 (sys.path 등록용)",
         "win" : "C:/Users/user/PycharmProjects/bbTrader_claude/xapi"
     },
     "folder_aikey" : {
-        "mac" : "/Users/chury99/PycharmProjects/bbTrader_claude/xconfig",
+        "mac" : "이 저장소의 xconfig 폴더 경로",
         "win" : "C:/Users/user/PycharmProjects/bbTrader_claude/xconfig"
     },
     "path_파이썬" : {
-        "mac" : "/Users/chury99/PycharmProjects/bbTrader_claude/.venv/bin/pyton",
+        "mac" : "가상환경 파이썬 실행파일 경로",
         "win" : "C:/Python313-64/python.exe"
     },
     "로그이름_trader" : "bb_trader",
@@ -45,7 +45,7 @@
         "win" : "180"
     },
     "재구동_대기시간(초)" : "5",
-    "계좌번호" : "53977788",
+    "계좌번호" : "키움 계좌번호 - kiwoomKey.json 의 최상위 키와 동일하게",
     "서버구분" : "실서버",
     "거래소구분" : "KRX",
     "시작시각" : "08:50:00",

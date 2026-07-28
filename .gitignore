@@ -1,7 +1,6 @@
-# 설정파일 - xconfig 전체를 제외하되 양식(.example)과 config.json 만 추적
+# 설정파일 - xconfig 전체를 제외하고 양식(.example)만 추적
 xconfig/*
 !xconfig/*.example
-!xconfig/config.json
 
 # 자동생성 - 접근토큰 (kiwoomKey.json 으로 발급받아 xapi 폴더에 캐싱)
 xapi/kiwoomToken.json

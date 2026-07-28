@@ -94,21 +94,18 @@ xconfig/                 ★ 손으로 채워야 하는 설정파일 모음 (아
 
 ### 최초 설정 — `xconfig/`
 
-**손으로 채워야 하는 파일은 전부 `xconfig/` 한 곳에 모여 있다.** 인증정보는 저장소에 올리지 않으므로
+**손으로 채워야 하는 파일은 전부 `xconfig/` 한 곳에 모여 있다.** 실제 값은 저장소에 올리지 않으므로
 (`.gitignore`) 양식만 `.example` 로 올려두었다. 확장자를 떼어 복사한 뒤 실제 값을 채운다.
 
 ```bash
-cp xconfig/server_info.json.example xconfig/server_info.json
-```
-```bash
-cp xconfig/kiwoomKey.json.example xconfig/kiwoomKey.json
+cd xconfig && for f in *.example; do cp -n "$f" "${f%.example}"; done
 ```
 
-| 파일 | 추적 | 내용 |
-|---|---|---|
-| `xconfig/config.json` | O | 경로·운영 설정. 인증정보가 아니라 저장소에 포함된다. 다른 머신이면 `folder_work` 등 mac/win 경로를 자기 환경에 맞게 고친다 |
-| `xconfig/kiwoomKey.json` | X | 키움 오픈API 앱키·시크릿키. **최상위 키는 계좌번호**이며 `config.json` 의 `계좌번호` 와 일치해야 한다 |
-| `xconfig/server_info.json` | X | 백업·차트 업로드용 sftp 접속정보와 서버 폴더 경로 |
+| 파일 | 내용 |
+|---|---|
+| `xconfig/config.json` | 경로·운영 설정. `folder_work` 등 mac/win 경로를 자기 환경에 맞게 고친다 |
+| `xconfig/kiwoomKey.json` | 키움 오픈API 앱키·시크릿키. **최상위 키는 계좌번호**이며 `config.json` 의 `계좌번호` 와 일치해야 한다 |
+| `xconfig/server_info.json` | 백업·차트 업로드용 sftp 접속정보와 서버 폴더 경로 |
 
 설정폴더 경로는 `ToolManager.folder_설정` 이 잡아 `config로딩()` 결과에 `folder_설정` 키로 주입한다.
 설정파일을 새로 추가한다면 이 키를 기준으로 읽어야 위치가 한 곳에 유지된다.
