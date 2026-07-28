@@ -3,8 +3,6 @@
 틱 데이터 기반 국내주식 단타 자동매매 시스템. 실시간 체결틱에서 매수세를 읽어 진입하고,
 가격 트레일링으로 청산한다. 백테스팅과 실매매가 **동일한 판정 정의**를 공유하며, 그 등가성을 재생으로 검증한다.
 
-> 상세 작업 이력·의사결정 근거는 [`_인수인계.md`](_인수인계.md) 참조.
-
 ---
 
 ## 1. 전략 개요
@@ -79,20 +77,42 @@ trader/
   bot_실시간수신.py        웹소켓 체결틱 수신 + 감시종목 등록
   bot_실시간저장.py        체결틱 CSV 저장 (백테스팅 원천 데이터)
   bot_실시간매매.py        ★ 실매매 판정·주문 (구간1/구간2)
-  bot_트레이딩.py
 
 analyzer/
   bot_백테스팅_틱기반매수세.py  ★ 메인 백테스팅 (구간1/구간2, 판정 정의의 기준)
   구간1검증.py              구간1 일일 홀드아웃 누적 검증
   워크포워드검증.py           파라미터 표본 외 검증 (과적합 진단)
   지표탐색.py               제로베이스 지표 예측력 랭킹
-  bot_일봉수집.py / bot_종목추천.py / bot_백테스팅_돌파매매*.py
+  bot_일봉수집.py / bot_종목추천.py
 
 ut/                      공용 (폴더·로그·차트·도구 매니저)
 xapi/                    키움 REST/WebSocket API 래퍼
 ```
 
 ## 3. 실행
+
+### 최초 설정 — 인증정보
+
+인증정보는 저장소에 올리지 않는다(`.gitignore`). 대신 양식만 `.example` 로 올려두었으니,
+확장자를 떼어 복사한 뒤 실제 값을 채운다.
+
+```bash
+cp server_info.json.example server_info.json
+```
+```bash
+cp xapi/kiwoomKey.json.example xapi/kiwoomKey.json
+```
+
+| 파일 | 내용 |
+|---|---|
+| `server_info.json` | 백업·차트 업로드용 sftp 접속정보와 서버 폴더 경로 |
+| `xapi/kiwoomKey.json` | 키움 오픈API 앱키·시크릿키. **최상위 키는 계좌번호**이며 `config.json` 의 `계좌번호` 와 일치해야 한다 |
+| `xapi/kiwoomToken.json` | 접근토큰. 최초 구동 시 자동 생성·갱신되므로 직접 만들 필요 없다 |
+
+`config.json` 은 인증정보가 아니라 경로·운영 설정이라 저장소에 포함되어 있다.
+다른 머신에서 돌린다면 `folder_work` 등 mac/win 경로를 자기 환경에 맞게 고친다.
+
+### 구동
 
 ```bash
 python launcher_trader.py      # 장중 실매매 (08:58 기동)

@@ -1,0 +1,13 @@
+{
+    "sftp": {
+        "hostname": "백업서버_주소",
+        "port": 22,
+        "username": "계정명",
+        "password": "비밀번호"
+    },
+    "folder": {
+        "server_work": "/서버/작업폴더/경로 - update_메인서버 동기화 대상",
+        "server_sub": "/서버/보조폴더/경로 - update_보조서버 동기화 대상",
+        "server_kakao": "/서버/웹폴더/경로 - 매매일보 차트 업로드 대상"
+    }
+}
