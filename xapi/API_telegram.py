@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import html
+import urllib.parse
 
 import requests
 
@@ -12,13 +14,10 @@ class TelegramAPI:
         설계 원칙 - 알림은 매매의 부수 기능이므로 어떤 경우에도 호출자를 죽이지 않는다.
           · 설정파일이 없거나 토큰이 비어 있으면 조용히 무시하고 False 를 반환한다
           · 네트워크 오류·타임아웃·API 거부는 전부 내부에서 잡아 로그만 남긴다
-          · 모든 요청에 타임아웃을 걸어 장중 매매 루프가 멈추지 않게 한다
-
-        카카오 모듈(API_kakao.KakaoAPI)과 같은 자리에 끼울 수 있도록 send_메세지 시그니처를 맞췄다. """
+          · 모든 요청에 타임아웃을 걸어 장중 매매 루프가 멈추지 않게 한다 """
 
     S_설정파일 = 'telegram.json'
     N_메세지최대 = 4096          # 텔레그램 sendMessage 본문 길이 상한
-    N_캡션최대 = 1024            # sendPhoto/sendDocument 캡션 길이 상한
     N_타임아웃 = 10              # 기본 요청 타임아웃 (초)
 
     def __init__(self, folder_설정=None, make_로그=None):
@@ -31,16 +30,14 @@ class TelegramAPI:
             folder_설정 = os.path.join(folder_프로젝트, 'xconfig')
         self.folder_설정 = folder_설정
 
-        # 설정 로딩 - bot_token / chat_id 두 항목이 전부이고 나머지는 선택 항목
+        # 설정 로딩 - bot_token / chat_id 두 항목이 전부
         self.dic_설정 = self._load_설정()
         self.s_토큰 = str(self.dic_설정.get('bot_token', '') or '').strip()
         self.s_chatid = str(self.dic_설정.get('chat_id', '') or '').strip()
         self.n_타임아웃 = int(self.dic_설정.get('타임아웃(초)', self.N_타임아웃))
-        self.b_무음 = bool(self.dic_설정.get('무음발송', False))
 
-        # 토큰 자리가 비었거나 안내문구(<...>)만 있으면 미설정으로 본다
-        b_토큰있음 = bool(self.s_토큰) and not self.s_토큰.startswith('<')
-        self.b_사용 = bool(self.dic_설정.get('사용여부', True)) and b_토큰있음
+        # 토큰 자리가 비었거나 안내문구(<...>)만 있으면 미설정 - 발송을 전부 건너뛴다
+        self.b_사용 = bool(self.s_토큰) and not self.s_토큰.startswith('<')
 
     # -----------------------------------------------------------------
     def _load_설정(self):
@@ -59,13 +56,13 @@ class TelegramAPI:
         """ 수신 대상 결정 - 인자를 주면 그 chat_id, 없으면 설정파일의 기본값 """
         return str(s_수신인).strip() if s_수신인 else self.s_chatid
 
-    def _req(self, s_메서드, dic_데이터=None, dic_파일=None):
+    def _req(self, s_메서드, dic_데이터=None):
         """ 봇 API 호출 - 성공 시 result, 실패 시 None (예외를 밖으로 던지지 않는다) """
         if not self.b_사용:
             return None
         s_url = f'https://api.telegram.org/bot{self.s_토큰}/{s_메서드}'
         try:
-            res = requests.post(s_url, data=dic_데이터, files=dic_파일, timeout=self.n_타임아웃)
+            res = requests.post(s_url, data=dic_데이터, timeout=self.n_타임아웃)
             dic_결과 = res.json()
             if not dic_결과.get('ok'):
                 # 토큰은 절대 로그에 남기지 않는다 (설명 문구만 기록)
@@ -101,20 +98,23 @@ class TelegramAPI:
             li_결과.append(s_조각)
         return li_결과
 
-    @staticmethod
-    def _dic_버튼(s_버튼이름, s_연결url):
-        """ url 인라인 버튼 - 텔레그램은 http/https 만 허용한다 """
-        if not s_버튼이름 or not s_연결url:
-            return None
-        if not str(s_연결url).startswith(('http://', 'https://')):
-            return None
-        return json.dumps(dict(inline_keyboard=[[dict(text=s_버튼이름, url=s_연결url)]]))
+    @classmethod
+    def s_링크(cls, s_표시이름, s_url):
+        """ 주소를 감춘 링크 태그 - 긴 url 대신 파일명만 보이게 한다 (send_메세지 의 HTML 모드용)
+            한글 경로는 퍼센트 인코딩하고 표시이름은 HTML 특수문자를 이스케이프한다 """
+        if not s_url or not str(s_url).startswith(('http://', 'https://')):
+            return html.escape(str(s_표시이름))
+        s_주소 = urllib.parse.quote(str(s_url), safe=':/?#[]@!$&\'()*+,;=~-._%')
+        return f'<a href="{html.escape(s_주소, quote=True)}">{html.escape(str(s_표시이름))}</a>'
 
     # -----------------------------------------------------------------
-    def send_메세지(self, s_메세지, s_수신인=None, s_버튼이름=None, s_연결url=None,
-                  s_파싱모드=None, b_무음=None, s_사용자=None):
-        """ 텍스트 발송. 길이 상한을 넘으면 여러 건으로 나눠 보내고 버튼은 마지막 건에 붙인다.
-            s_사용자는 카카오 모듈과 시그니처를 맞추기 위한 자리이며 텔레그램에서는 쓰지 않는다.
+    def send_메세지(self, s_메세지, s_수신인=None, li_링크=None, b_HTML=False):
+        """ 텍스트 발송. 길이 상한을 넘으면 여러 건으로 나눠 보낸다.
+
+            li_링크 = [(표시이름, url), ...] 를 주면 본문 끝에 링크를 붙인다.
+              주소는 감추고 표시이름만 보이며(눌러서 열림), 이때 본문은 자동으로 HTML 이스케이프된다.
+            b_HTML 은 s_메세지 안에 이미 HTML 태그를 직접 넣었을 때만 True 로 준다.
+
             반환: 전량 발송 성공 여부 """
         if not self.b_사용:
             return False
@@ -123,50 +123,22 @@ class TelegramAPI:
             self.make_로그('chat_id 가 설정되지 않았습니다')
             return False
 
-        li_조각 = self._li_분할(str(s_메세지), self.N_메세지최대)
-        s_버튼 = self._dic_버튼(s_버튼이름, s_연결url)
+        s_본문 = str(s_메세지)
+        b_HTML모드 = bool(b_HTML or li_링크)
+        if li_링크:
+            # 본문은 평문이므로 이스케이프하고, 링크만 태그로 붙인다
+            s_본문 = s_본문 if b_HTML else html.escape(s_본문)
+            s_본문 += '\n\n' + '\n'.join(self.s_링크(이름, url) for 이름, url in li_링크)
+
         b_성공 = True
-        for n_순번, s_조각 in enumerate(li_조각):
-            dic_데이터 = dict(chat_id=s_chatid, text=s_조각,
-                           disable_notification=self.b_무음 if b_무음 is None else b_무음)
-            if s_파싱모드:
-                dic_데이터['parse_mode'] = s_파싱모드
-            if s_버튼 and n_순번 == len(li_조각) - 1:
-                dic_데이터['reply_markup'] = s_버튼
+        for s_조각 in self._li_분할(s_본문, self.N_메세지최대):
+            dic_데이터 = dict(chat_id=s_chatid, text=s_조각)
+            if b_HTML모드:
+                dic_데이터['parse_mode'] = 'HTML'
+                dic_데이터['link_preview_options'] = json.dumps(dict(is_disabled=True))
             if self._req('sendMessage', dic_데이터=dic_데이터) is None:
                 b_성공 = False
         return b_성공
-
-    def send_사진(self, path_파일, s_설명='', s_수신인=None, b_무음=None):
-        """ 이미지 발송 (svg 는 텔레그램이 미리보기를 못 하므로 send_문서 를 쓴다) """
-        return self._send_첨부(path_파일=path_파일, s_설명=s_설명, s_수신인=s_수신인,
-                             b_무음=b_무음, s_메서드='sendPhoto', s_필드='photo')
-
-    def send_문서(self, path_파일, s_설명='', s_수신인=None, b_무음=None):
-        """ 파일 발송 (svg/html/csv 등 원본 그대로) """
-        return self._send_첨부(path_파일=path_파일, s_설명=s_설명, s_수신인=s_수신인,
-                             b_무음=b_무음, s_메서드='sendDocument', s_필드='document')
-
-    def _send_첨부(self, path_파일, s_설명, s_수신인, b_무음, s_메서드, s_필드):
-        if not self.b_사용:
-            return False
-        if not os.path.exists(path_파일):
-            self.make_로그(f'파일 없음 - {os.path.basename(path_파일)}')
-            return False
-        s_chatid = self._s_chatid(s_수신인)
-        if not s_chatid:
-            self.make_로그('chat_id 가 설정되지 않았습니다')
-            return False
-
-        dic_데이터 = dict(chat_id=s_chatid,
-                       caption=str(s_설명)[:self.N_캡션최대],
-                       disable_notification=self.b_무음 if b_무음 is None else b_무음)
-        try:
-            with open(path_파일, mode='rb') as f:
-                return self._req(s_메서드, dic_데이터=dic_데이터, dic_파일={s_필드: f}) is not None
-        except OSError as e:
-            self.make_로그(f'파일 읽기 실패 - {os.path.basename(path_파일)} ({type(e).__name__})')
-            return False
 
     # -----------------------------------------------------------------
     def check_연결(self):
@@ -236,7 +208,7 @@ def run():
         print(f'설정파일 없음 - {path_설정}')
         print(f'  xconfig/{TelegramAPI.S_설정파일}.example 를 복사해 채운 뒤 다시 실행하세요.')
         return
-    if not api.s_토큰 or api.s_토큰.startswith('<'):
+    if not api.b_사용:
         print(f'bot_token 이 비어 있습니다 - BotFather 에서 발급받아 채우세요.\n  {path_설정}')
         return
 
@@ -271,8 +243,7 @@ def run():
 
     if len(sys.argv) > 1:
         s_메세지 = ' '.join(sys.argv[1:])
-        b_결과 = api.send_메세지(s_메세지=s_메세지)
-        print(f'\n시험 발송 {"성공" if b_결과 else "실패"} - {s_메세지}')
+        print(f'\n시험 발송 {"성공" if api.send_메세지(s_메세지=s_메세지) else "실패"} - {s_메세지}')
 
 
 if __name__ == '__main__':
