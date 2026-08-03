@@ -150,7 +150,8 @@ class AnalyzerBot:
             path_감시 = os.path.join(self.folder_감시종목, f'dic_감시종목_{s_일자}.pkl')
             if os.path.exists(path_감시):
                 dic_감시종목 = pd.read_pickle(path_감시)
-                li_감시종목 = dic_감시종목.get('매매대상', list()) + dic_감시종목.get('수집대상', list())
+                # 두 키(조회순위포함/조회순위미포함)는 감시 100종목의 분할일 뿐이라 합쳐서 쓴다 - 매매 대상은 아래 유동성/가격 필터가 정한다
+                li_감시종목 = dic_감시종목.get('조회순위포함', list()) + dic_감시종목.get('조회순위미포함', list())
             else:
                 df_틱헤더 = pd.read_csv(os.path.join(self.folder_틱, f'주식체결_{s_일자}.csv'),
                                      encoding='cp949', usecols=['종목코드'], dtype=str, on_bad_lines='skip')

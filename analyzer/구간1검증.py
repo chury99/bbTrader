@@ -108,7 +108,8 @@ class 구간1Validator:
         if not os.path.exists(path_감시):
             return {}
         dic_감시 = pd.read_pickle(path_감시)
-        li = dic_감시.get('매매대상', []) + dic_감시.get('수집대상', [])
+        # 두 키(조회순위포함/조회순위미포함)는 감시 100종목의 분할일 뿐 - 합친 뒤 거래대금·가격으로 걸러야 매매 대상이 된다
+        li = dic_감시.get('조회순위포함', []) + dic_감시.get('조회순위미포함', [])
         folder_일봉 = os.path.join(self.folder_서버, '데이터', '차트캐시', '일봉1')
         if not os.path.exists(folder_일봉):
             return {}
