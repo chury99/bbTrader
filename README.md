@@ -204,12 +204,60 @@ cd xconfig && for f in *.example; do cp -n "$f" "${f%.example}"; done
 | `xconfig/config.json` | 경로·운영 설정. `folder_work` 등 mac/win 경로를 자기 환경에 맞게 고친다 |
 | `xconfig/kiwoomKey.json` | 키움 오픈API 앱키·시크릿키. **최상위 키는 계좌번호**이며 `config.json` 의 `계좌번호` 와 일치해야 한다 |
 | `xconfig/server_info.json` | 백업·차트 업로드용 sftp 접속정보와 서버 폴더 경로 |
+| `xconfig/telegram.json` | 텔레그램 알림봇 토큰·수신 `chat_id`. 쓰지 않으면 파일을 두지 않아도 된다 |
 
 설정폴더 경로는 `ToolManager.folder_설정` 이 잡아 `config로딩()` 결과에 `folder_설정` 키로 주입한다.
 설정파일을 새로 추가한다면 이 키를 기준으로 읽어야 위치가 한 곳에 유지된다.
 
 > `xapi/kiwoomToken.json` · `.lock` 은 앱키로 발급받아 캐싱하는 **자동생성물**이라 `xconfig/` 가 아니라
 > `xapi/` 에 그대로 둔다. 손댈 일이 없고, 지워도 다음 구동 때 다시 만들어진다.
+
+### 텔레그램 알림 — `xapi/API_telegram.py`
+
+설정은 `xconfig/telegram.json` 두 줄이 전부다.
+
+```json
+{
+    "bot_token": "BotFather 에서 /newbot 으로 발급받은 토큰",
+    "chat_id": "알림 받을 대화 id"
+}
+```
+
+| 항목 | 뜻 |
+|---|---|
+| `bot_token` | BotFather 발급 토큰. 비어 있으면 모든 발송이 조용히 무시된다 |
+| `chat_id` | 수신 대상. 개인 대화는 양수, 그룹·채널은 `-100` 으로 시작하는 음수 |
+| `사용여부` | (선택, 기본 `true`) `false` 면 발송을 전부 건너뛴다 |
+| `타임아웃(초)` | (선택, 기본 `10`) 장중 매매 루프가 알림 때문에 멈추지 않게 하는 안전장치 |
+| `무음발송` | (선택, 기본 `false`) 알림음 없이 보낼지 |
+
+`chat_id` 는 눈에 보이지 않으므로 **봇에게 아무 메세지나 한 번 보낸 뒤** 아래를 실행한다.
+
+```bash
+python xapi/API_telegram.py
+```
+
+토큰 유효성(`getMe`)과 설정된 `chat_id` 가 실제로 닿는지(`getChat`)를 확인하고,
+닿지 않으면 대화 목록에서 찾아 **설정파일에 자동으로 써 넣는다**
+(개인 대화가 하나일 때만 자동 저장하고, 여럿이면 목록만 보여준다. `bot_token` 은 건드리지 않는다).
+인자를 주면 시험 발송까지 한다 — `python xapi/API_telegram.py 연결 확인`
+
+> **그룹·채널로 받으려면 봇을 먼저 그 방에 넣어야 한다.** `-100...` 형태의 id 를 넣어도
+> 봇이 멤버가 아니면 `chat not found` 로 실패한다. 채널은 봇을 **관리자**로 올려야 하고,
+> 그룹은 멤버로 추가하기만 하면 된다. 봇은 자기가 속하지 않은 방의 id 를 조회할 수 없다.
+
+사용은 카카오 모듈과 시그니처를 맞춰 놓아 같은 자리에 끼울 수 있다.
+
+```python
+from xapi import API_telegram
+tg = API_telegram.TelegramAPI(make_로그=self.make_로그)
+tg.send_메세지(s_메세지='[20260803] 백테스팅 완료', s_버튼이름='리포트', s_연결url='http://...')
+tg.send_문서(path_파일='...svg', s_설명='매매일보')
+```
+
+**알림은 매매의 부수 기능이므로 어떤 경우에도 호출자를 죽이지 않는다.** 설정파일이 없거나 `b_사용` 이 꺼져 있으면
+조용히 `False` 를 돌려주고, 통신 오류·API 거부는 전부 내부에서 잡아 로그만 남긴다. 토큰은 로그에 찍지 않는다.
+본문이 4,096자를 넘으면 줄 단위로 나눠 보내고 버튼은 마지막 건에 붙인다.
 
 ### 구동
 

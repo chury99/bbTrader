@@ -1,0 +1,4 @@
+{
+    "bot_token": "BotFather 에서 /newbot 으로 발급받은 봇 토큰 (예: 1234567890:AAH...)",
+    "chat_id": "알림 받을 대화 id - 봇에게 아무 메세지나 보낸 뒤 python xapi/API_telegram.py 를 실행하면 찾아서 채워준다"
+}
