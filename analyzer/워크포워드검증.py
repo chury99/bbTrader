@@ -25,6 +25,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import ut
 from analyzer import bot_백테스팅_틱기반매수세 as BT   # 현행 파라미터/기준 재사용
 
+# ── 최적화 후보 지표 (현재 미사용) ────────────────────────────────────────
+# 2026-08-06 등록. 캐시에는 실리지만 진입·청산 어느 판정에도 연결돼 있지 않다.
+# 나중에 파라미터 최적화에서 조건 축으로 꺼내 쓰기 위한 것.
+#   체결강도롤링/누적       매수체결량 ÷ 매도체결량 × 100        (수량 기준)
+#   체결횟수강도롤링/누적   매수체결건수 ÷ 매도체결건수 × 100    (건수 기준)
+#   단위매수량/단위매도량   체결량 ÷ 체결건수                    (한 건의 평균 크기, 주)
+#   매수횟수5/10            초당 매수 체결 건수의 5초·10초 이동평균
+#   체결횟수10              초당 (매수+매도) 체결 건수의 10초 이동평균
+# 전부 단주(_T_단주 이하) 제외 기준이며 롤링 창은 N_강도창(60초).
+N_강도창 = 60
+LI_후보지표 = ['매수량', '매도량', '매수틱수', '매도틱수',
+           '체결강도롤링', '체결강도누적', '체결횟수강도롤링', '체결횟수강도누적',
+           '단위매수량', '단위매도량', '매수횟수5', '매수횟수10', '체결횟수10']
+
 
 # noinspection NonAsciiCharacters,PyPep8Naming,PyAttributeOutsideInit,SpellCheckingInspection
 class WalkForward:
@@ -117,7 +131,34 @@ class WalkForward:
         sri_평균틱 = sri_전체.rolling(300).sum().shift(60) / sri_틱수300.replace(0, np.nan)
         d['덩어리배수'] = d['최대매수틱'].rolling(60).max() / sri_평균틱.replace(0, np.nan)
 
-        return dict(
+        # ── 미사용 지표 (2026-08-06 등록, LI_후보지표) ─────────────────────
+        # 진입·청산 판정에는 쓰지 않는다. 나중에 파라미터 최적화에서 후보로 꺼내 쓰려고
+        # 캐시에만 실어둔다. 여기 값을 조건에 연결하는 순간 산출물이 바뀌므로
+        # 반드시 충실도 게이트를 다시 통과시킬 것.
+        # 매수량/매도량/틱수는 이미 단주(_T_단주 이하) 제외 기준이라 분자·분모가 서로 맞다.
+        d['매도틱수'] = (df_유효.loc[df_유효['거래량'] < 0].groupby('초').size()
+                      .reindex(ary_초).fillna(0))
+        d['매수틱수'] = df_매수틱.groupby('초').size().reindex(ary_초).fillna(0)
+        sri_매수60 = d['매수량'].rolling(N_강도창, min_periods=1).sum()
+        sri_매도60 = d['매도량'].rolling(N_강도창, min_periods=1).sum()
+        sri_매수건60 = d['매수틱수'].rolling(N_강도창, min_periods=1).sum()
+        sri_매도건60 = d['매도틱수'].rolling(N_강도창, min_periods=1).sum()
+        # 체결강도 = 매수체결량 / 매도체결량 x 100  (증권사 표준 정의의 수량판)
+        d['체결강도롤링'] = sri_매수60 / sri_매도60.replace(0, np.nan) * 100
+        d['체결강도누적'] = d['매수량'].cumsum() / d['매도량'].cumsum().replace(0, np.nan) * 100
+        # 체결횟수강도 = 매수체결건수 / 매도체결건수 x 100  (같은 것의 건수판)
+        d['체결횟수강도롤링'] = sri_매수건60 / sri_매도건60.replace(0, np.nan) * 100
+        d['체결횟수강도누적'] = (d['매수틱수'].cumsum()
+                          / d['매도틱수'].cumsum().replace(0, np.nan) * 100)
+        # 단위매수량 = 매수체결량 / 매수체결건수  (매수 한 건의 평균 크기, 주)
+        d['단위매수량'] = sri_매수60 / sri_매수건60.replace(0, np.nan)
+        d['단위매도량'] = sri_매도60 / sri_매도건60.replace(0, np.nan)
+        # 초당 체결 건수의 짧은 이동평균 (초당 원값은 튀어서 이평으로 본다)
+        d['매수횟수5'] = d['매수틱수'].rolling(5, min_periods=1).mean()
+        d['매수횟수10'] = d['매수틱수'].rolling(10, min_periods=1).mean()
+        d['체결횟수10'] = (d['매수틱수'] + d['매도틱수']).rolling(10, min_periods=1).mean()
+
+        dic_out = dict(
             ary_초=ary_초.astype(np.int32),
             price=d['price'].values.astype(np.float64),
             변동폭300=d['변동폭300'].values.astype(np.float64),
@@ -127,6 +168,9 @@ class WalkForward:
             체결속도=d['체결속도'].values.astype(np.float64),
             덩어리배수=d['덩어리배수'].values.astype(np.float64),
             이격률=d['이격률'].values.astype(np.float64))
+        for s_키 in LI_후보지표:
+            dic_out[s_키] = d[s_키].values.astype(np.float64)
+        return dic_out
 
     # =================================================================
     # 대상일자 / 선정종목 / 캐시
@@ -145,10 +189,15 @@ class WalkForward:
         return df.loc[df['종목선정']]
 
     def build_cache(self, s_일자, force=False):
-        """ 하루치 지표 캐시 (종목코드 -> arrays). 이미 있으면 로딩 """
+        """ 하루치 지표 캐시 (종목코드 -> arrays). 이미 있으면 로딩
+
+            ※ 지표를 새로 추가하면 옛 캐시에는 그 키가 없다. 키 유무를 보고 자동 재생성한다
+              (--rebuild 를 잊어 옛 캐시로 조용히 도는 것을 막는다). """
         path = os.path.join(self.folder_캐시, f'ind_{s_일자}.pkl')
         if os.path.exists(path) and not force:
-            return pd.read_pickle(path)
+            dic = pd.read_pickle(path)
+            if not dic or all(k in next(iter(dic.values())) for k in LI_후보지표):
+                return dic
         df_틱 = self._load_틱(s_일자)
         df_sel = self._선정종목(s_일자)
         if df_틱 is None or df_sel is None or df_sel.empty:

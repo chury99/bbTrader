@@ -262,6 +262,64 @@ class Dashboard:
     # =================================================================
     # 리포트 생성
     # =================================================================
+    def li_롤링비교(self):
+        """ 파라미터 고정(현행) vs 매일 직전 N일 재최적화(튜닝) 비교 구획
+
+            analyzer/롤링워크포워드.py 가 손익행렬을 캐시에 쌓고 새 일자만 증분 계산한다.
+            무거운 계산이므로 실패하면 조용히 건너뛴다 — 대시보드 본체를 막지 않는다. """
+        try:
+            from analyzer.롤링워크포워드 import 롤링워크포워드, N_학습창
+            wf = 롤링워크포워드()
+            dic_r = wf.평가(n_학습창=N_학습창)
+        except Exception as e:                                  # noqa: BLE001
+            self.make_로그(f'롤링 비교 생략 - {type(e).__name__}: {e}')
+            return list()
+        if not dic_r:
+            return list()
+
+        B = ['<h2>파라미터 고정 vs 매일 재최적화</h2>']
+        B.append(f'<p class="mu">직전 {dic_r["학습창"]}거래일로 진입 조건 '
+                 f'{dic_r["조합수"]}칸을 훑어 최적을 고르고, 그 값을 <b>다음 미지의 1일</b>에 '
+                 f'적용했다면 어땠는지. 청산·구간2·자금관리는 전부 현행 그대로이고 '
+                 f'구간1 진입 축만 바꾼다. 격자에는 아직 매매에 쓰지 않는 후보지표'
+                 f'(체결강도·체결횟수강도·단위매수량 등)가 포함돼 있다.</p>')
+        B.append('<div class="tw"><table><thead><tr><th class="l">방식</th><th>폴드</th>'
+                 '<th>손익 합</th><th>비고</th></tr></thead><tbody>')
+        for s_라벨, n_값, s_설명 in [
+                ('현행 (파라미터 고정)', dic_r['현행'], '지금 쓰는 값 그대로'),
+                (f'매일 재최적화 (직전 {dic_r["학습창"]}일)', dic_r['튜닝'],
+                 f'튜닝 우세 {dic_r["승"]}/{len(dic_r["폴드"])}일 · '
+                 f'현행과 같은 값을 고른 날 {dic_r["동일"]}일'),
+                ('격자 무작위 (대조군)', dic_r['무작위'],
+                 f'{dic_r["조합수"]}칸에서 아무거나 골랐을 때의 평균'),
+                ('오라클 (상한)', dic_r['오라클'], '검증일을 미리 알았을 때 — 달성 불가')]:
+            B.append(f'<tr><td class="l">{s_라벨}</td>'
+                     f'<td>{len(dic_r["폴드"]) if "오라클" not in s_라벨 else ""}</td>'
+                     f'<td>{s_pct(n_값)}</td>'
+                     f'<td class="l"><span class="mu">{s_설명}</span></td></tr>')
+        B.append('</tbody></table></div>')
+        B.append(f'<p class="mu">재최적화 결과는 격자 {dic_r["조합수"]}칸 중 '
+                 f'<b>상위 {dic_r["튜닝백분위"]:.0f}%</b> 자리다. '
+                 f'무작위 평균({s_pct(dic_r["무작위"])})과 견줘야 정보를 쓴 것인지 갈린다 — '
+                 f'격자를 훑어 최선을 고르는 과정 자체가 다중비교라 그냥 좋아 보일 수 있다.</p>')
+
+        B.append('<h3>폴드별</h3>')
+        B.append('<div class="tw"><table><thead><tr><th>검증일</th><th>재최적화</th>'
+                 '<th>현행</th><th>오라클</th><th class="l">그날 채택된 조건</th>'
+                 '</tr></thead><tbody>')
+        for x in dic_r['폴드'][-10:]:
+            B.append(f'<tr><td>{x["검증일"]}</td>'
+                     f'<td>{s_pct(x["튜닝"])} <span class="mu">({x["건수"]}건)</span></td>'
+                     f'<td>{s_pct(x["현행"])}</td><td>{s_pct(x["오라클"])}</td>'
+                     f'<td class="l"><span class="mu">{wf.s_파라미터(x["파라미터"])}</span></td>'
+                     f'</tr>')
+        B.append('</tbody></table></div>')
+        B.append('<p class="mu">이 비교는 <b>참고용</b>이다. 폴드가 아직 적고 학습창이 서로 '
+                 '겹쳐 독립 시행이 아니며, 결과가 몇 날의 큰 차이에 기대고 있을 수 있다. '
+                 '재최적화가 계속 앞선다면 그때 후보를 <b>사전 등록</b>해 현행과 나란히 '
+                 '표본외 기록을 쌓는 것이 다음 단계다.</p>')
+        return B
+
     def make_리포트(self):
         df = self.df_거래()
         if not len(df):
@@ -487,6 +545,9 @@ class Dashboard:
             B.append(f'<tr><td class="l">{s_k}</td><td>{s_v}</td><td class="l">'
                      f'<span class="mu">{s_설명}</span></td></tr>')
         B.append('</tbody></table></div>')
+
+        # ── 파라미터 고정 vs 매일 재최적화 (실패해도 대시보드 자체는 나가야 한다)
+        B += self.li_롤링비교()
 
         # ── 앞으로
         B.append('<h2>앞으로</h2>')
