@@ -9,6 +9,20 @@ import paramiko
 
 import ut
 
+# ===== 보관기간 예외 (2026-08-18) =====
+# 재생성이 불가능한 원천 데이터에는 보관기간을 적용하지 않는다.
+#   30일 정책이 20260716·20260717 틱을 지웠고, 그 탓에 구간1 홀드아웃 재평가에서 개발표본이 7일 → 5일로 줄었다.
+#   원천만 남아 있으면 분석 산출물은 언제든 다시 만들 수 있지만 그 반대는 성립하지 않는다 - 그래서 비대칭으로 둔다.
+#   ※ 여기 없는 폴더(분석 산출물·지표캐시 등)는 전부 보관기간 경과 시 삭제된다.
+LI_보존폴더 = ['매수매도|주식체결',      # 체결틱 원본 - 전략 판정의 표본 그 자체
+            '매수매도|주문체결',      # 실계좌 주문체결 원장 - 실매매 대조·슬리피지 실측의 유일한 근거
+            '매수매도|감시종목',      # 그날 무엇을 감시했는지 - 사후 재현 불가
+            '매수매도|종목잔고',      # 계좌 잔고 스냅샷
+            '매수매도|신호탐색',      # 진입 신호 탐색 기록
+            '데이터|조회순위',        # 그 시각 조회 상위 - 사후 재조회 불가
+            '데이터|대상종목']        # 그날 대상종목 스냅샷
+S_백업접두 = '_백업'                  # 백업 폴더는 통째로 제외 - 안쪽만 갉아먹으면 반쪽짜리가 되어 없느니만 못하다
+
 
 # noinspection NonAsciiCharacters,PyPep8Naming,SpellCheckingInspection
 class FileManager:
@@ -75,19 +89,28 @@ class FileManager:
         # 로그 기록
         self.make_로그(f'{len(li_업데이트파일):,.0f}개 파일 업데이트 완료')
 
+    def _b_보존폴더(self, folder_대상, li_제외폴더):
+        """ 보관기간 적용에서 빼야 할 폴더인지 판정 (원천 데이터 폴더 / 백업 폴더와 그 하위) """
+        if folder_대상 in li_제외폴더:
+            return True
+        return any(s_조각.startswith(S_백업접두) for s_조각 in folder_대상.split(os.sep))
+
     def rotate_보관파일(self):
-        """ 로컬머신 대상으로 보관기간 경과된 파일 삭제 """
+        """ 로컬머신 대상으로 보관기간 경과된 파일 삭제
+
+            단 LI_보존폴더(원천 데이터)와 백업 폴더는 대상에서 제외한다 - 재생성이 불가능하기 때문. """
         # 기준정보 정의
         dic_보관기간 = dict(데이터=self.dic_config['파일보관기간(일)_collector'],
                         매수매도=self.dic_config['파일보관기간(일)_trader'],
                         분석=self.dic_config['파일보관기간(일)_analyzer'])
-        li_제외폴더 = list()
+        li_제외폴더 = [self.dic_폴더정보[s_키] for s_키 in LI_보존폴더 if s_키 in self.dic_폴더정보]
 
         # 메인폴더별 파일 탐색
         for s_메인폴더, s_보관기간 in dic_보관기간.items():
-            # 대상폴더 탐색
+            # 대상폴더 탐색 - 원천·백업 폴더는 제외
             li_하위폴더 = self._find_하위폴더(s_기준폴더=s_메인폴더, b_전체폴더명=True)
-            li_대상폴더 = [폴더 for 폴더 in li_하위폴더 if 폴더 not in li_제외폴더]
+            li_대상폴더 = [폴더 for 폴더 in li_하위폴더 if not self._b_보존폴더(폴더, li_제외폴더)]
+            n_보존 = len(li_하위폴더) - len(li_대상폴더)
 
             # 폴더별 삭제대상 파일 탐색
             li_삭제대상 = list()
@@ -116,7 +139,8 @@ class FileManager:
             # 로그 기록
             s_삭제용량 = self._cal_단위변경(n_바이트=sum(li_삭제용량))
             self.make_로그(f'{s_메인폴더} 파일 삭제 완료'
-                         f' - {s_보관기간}일 - {s_기준일자} 기준 - {len(li_삭제대상):,.0f}개 파일 - {s_삭제용량}')
+                         f' - {s_보관기간}일 - {s_기준일자} 기준 - {len(li_삭제대상):,.0f}개 파일 - {s_삭제용량}'
+                         f' - 보존폴더 {n_보존}개 제외')
 
     # noinspection PyUnresolvedReferences
     def check_잔여공간(self):
