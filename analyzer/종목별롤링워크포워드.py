@@ -200,12 +200,15 @@ class 종목별롤링워크포워드(롤링워크포워드):
     def li_틱일자(self):
         """ 헤더만 있는 휴장일 파일은 제외한 실제 거래일 (오름차순)
 
-            당일은 장중이면 틱이 아직 쌓이는 중이라 뺀다 - 반쪽짜리 하루를
-            행렬에 굳혀 두면 다음 날 그 종목의 학습셋이 조용히 오염된다. """
-        s_오늘 = f'{pd.Timestamp.now():%Y%m%d}'
+            당일은 장 마감(15:35) 전이면 틱이 아직 쌓이는 중이라 뺀다 - 반쪽짜리 하루를
+            행렬에 굳혀 두면 다음 날 그 종목의 학습셋이 조용히 오염된다.
+            마감 뒤에는 넣는다 (대시보드가 백테스팅 직후 호출하므로 당일이 빠지면 늘 하루 늦는다). """
+        ts_지금 = pd.Timestamp.now()
+        s_오늘 = f'{ts_지금:%Y%m%d}'
+        b_마감후 = ts_지금 >= ts_지금.normalize() + pd.Timedelta(hours=15, minutes=40)
         li = list()
         for d in self.li_일자():
-            if d >= s_오늘:
+            if d > s_오늘 or (d == s_오늘 and not b_마감후):
                 continue
             path = os.path.join(self.folder_틱, f'주식체결_{d}.csv')
             if os.path.getsize(path) > 10_000:
