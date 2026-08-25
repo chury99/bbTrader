@@ -78,18 +78,19 @@ ul{margin:10px 0;padding-left:20px;} li{margin:7px 0;}
 code{background:var(--panel2);border:1px solid var(--bd);border-radius:4px;
 padding:1px 6px;font-size:12.5px;color:#e6edf3;}
 .chart{background:var(--panel);border:1px solid var(--bd);border-radius:6px;
-padding:14px 12px 8px;margin:14px 0;}
+padding:14px 12px 10px;margin:14px 0;}
 .chart svg{width:100%;height:auto;display:block;}
 .chd{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:baseline;margin-bottom:6px;
 padding:0 4px;}
 .chd b{font-size:15px;color:#e6edf3;}
-.lg{display:flex;flex-wrap:wrap;gap:4px 18px;color:var(--mu);font-size:12px;
-padding:6px 4px 14px;}
-.lg .li{display:inline-flex;align-items:flex-start;gap:6px;max-width:100%;}
+.lg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px 22px;
+color:var(--mu);font-size:12px;padding:3px 4px 4px;}
+.lg .li{display:flex;align-items:baseline;gap:6px;min-width:0;}
 .lg b{color:#c9d1d9;font-weight:600;white-space:nowrap;}
-.lg .df{color:#6e7681;}
-.lg .tag{flex:0 0 auto;margin-top:5px;}
-.lg .tag.ln{margin:9px 0 0;}
+.lg .df{color:#6e7681;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lg .tag{flex:0 0 auto;align-self:center;}
+.lg .tag.ln{align-self:center;margin:0;}
+@media (max-width:560px){.lg{font-size:11px;gap:1px 12px;}}
 .tag.ln{width:15px;height:0;border-top:2px dashed;border-radius:0;background:none !important;
 margin-bottom:3px;}
 """
@@ -382,7 +383,7 @@ class Dashboard:
                        f'stroke-width="{n_굵기}" stroke-linejoin="round"{s_대시}/>'
                        for seg in ' '.join(li).split('|') if seg.count(',') >= 2)
 
-    N_상단여백 = 22        # 패널 제목이 들어갈 자리
+    N_상단여백 = 15        # 패널 제목이 들어갈 자리 (칸 사이가 벌어지지 않게 최소로)
     N_눈금웜업 = 60         # 눈금을 잡을 때 무시할 앞부분 (초)
                         #   체결강도누적은 09:00 직후 분모(매도 누계)가 거의 0이라 수천까지 튄다.
                         #   그 1분을 눈금 계산에서 빼면 나머지 전 구간이 제대로 펴진다
@@ -470,7 +471,8 @@ class Dashboard:
                               f'x2="{n_px(n_t):.1f}" y2="{n_상단 + n_h}" stroke="{s_색}" '
                               f'stroke-width="1.3" opacity=".85"/>')
 
-            n_높이 = n_상단 + n_h + (24 if b_끝 else 6)
+            # 아래 여백 - 눈금 글자가 패널 바닥선에 걸쳐 있어 8px 은 있어야 잘리지 않는다
+            n_높이 = n_상단 + n_h + (24 if b_끝 else 8)
             if b_끝:                                  # 시간축은 맨 아래 칸에만 (폭이 같아 다 맞는다)
                 for n_i in range(7):
                     n_t = a_x[0] + (a_x[-1] - a_x[0]) * n_i / 6
