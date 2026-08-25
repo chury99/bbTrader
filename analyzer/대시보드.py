@@ -83,7 +83,10 @@ padding:14px 12px 8px;margin:14px 0;}
 .chd{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:baseline;margin-bottom:6px;
 padding:0 4px;}
 .chd b{font-size:15px;color:#e6edf3;}
-.lg{display:flex;flex-wrap:wrap;gap:14px;color:var(--mu);font-size:12px;padding:6px 4px 0;}
+.lg{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--mu);font-size:12px;
+padding:5px 4px 13px;}
+.tag.ln{width:15px;height:0;border-top:2px dashed;border-radius:0;background:none !important;
+margin-bottom:3px;}
 """
 
 
@@ -225,20 +228,23 @@ class Dashboard:
     # =================================================================
     # 구획 3 — 당일 지표 변화
     # =================================================================
-    # 패널 정의: (제목, 높이, 좌축 계열, 우축 계열, 현행 문턱)
+    # 패널 정의: (제목, 높이, 좌축 계열, 우축 계열, 현행 문턱, 강건스케일)
+    #   강건스케일 - 상하위 2%를 빼고 눈금을 잡는다. 장 시작 몇 초는 누적 분모가 거의 0이라
+    #   체결강도가 수천까지 튀는데, 그 한 점 때문에 나머지 전 구간이 납작해진다.
+    #   대신 눈금 밖으로 나간 선은 패널 경계에서 잘라 그린다(clip).
     LI_패널 = [
         ('가격', 172, [('price', '#e6edf3', 2.0, '가격'), ('stop', '#d29922', 1.4, '스탑')],
-         None, []),
+         None, [], False),
         ('진입 성분 (지금 쓰는 축)', 118, [('체결률10', '#39c5cf', 1.6, '체결률(10초)')],
          [('순매수10', '#a371f7', 1.6, '순매수비율(10초)')],
-         [('체결률10', None), ('순매수10', None)]),
+         [('체결률10', None), ('순매수10', None)], True),
         ('강도 계열 (미사용 후보)', 118,
          [('체결강도롤링', '#d29922', 1.6, '체결강도(60초)'),
           ('체결강도누적', '#8b949e', 1.3, '체결강도(누적)'),
           ('체결횟수강도롤링', '#39c5cf', 1.4, '체결횟수강도(60초)')], None,
-         [('체결강도롤링', 100.0)]),
+         [('체결강도롤링', 100.0)], True),
         ('체결 크기·빈도 (미사용 후보)', 118, [('매수횟수5', '#a371f7', 1.6, '매수횟수(5초평균)')],
-         [('단위비', '#d29922', 1.6, '단위매수÷매도')], [('단위비', 1.0)]),
+         [('단위비', '#d29922', 1.6, '단위매수÷매도')], [('단위비', 1.0)], True),
     ]
     LI_지표 = ['체결률10', '순매수10', '체결강도롤링', '체결강도누적', '체결횟수강도롤링',
              '매수횟수5', '단위비', '이격률']
@@ -321,12 +327,15 @@ class Dashboard:
         return li_out
 
     @staticmethod
-    def _t_범위(a, li_문턱=()):
+    def _t_범위(a, li_문턱=(), b_강건=False):
         a = np.asarray(a, dtype=float)
         a = a[np.isfinite(a)]
         if not len(a):
             return 0.0, 1.0
-        n_lo, n_hi = float(a.min()), float(a.max())
+        if b_강건 and len(a) > 50:
+            n_lo, n_hi = (float(x) for x in np.percentile(a, [1, 99]))
+        else:
+            n_lo, n_hi = float(a.min()), float(a.max())
         for n_v in li_문턱:
             n_lo, n_hi = min(n_lo, n_v * 0.9), max(n_hi, n_v * 1.1)
         if n_hi - n_lo < 1e-9:
@@ -351,43 +360,77 @@ class Dashboard:
                        f'stroke-width="{n_굵기}" stroke-linejoin="round"{s_대시}/>'
                        for seg in ' '.join(li).split('|') if seg.count(',') >= 2)
 
+    N_상단여백 = 22        # 패널 제목이 들어갈 자리
+    N_눈금웜업 = 60         # 눈금을 잡을 때 무시할 앞부분 (초)
+                        #   체결강도누적은 09:00 직후 분모(매도 누계)가 거의 0이라 수천까지 튄다.
+                        #   그 1분을 눈금 계산에서 빼면 나머지 전 구간이 제대로 펴진다
+                        #   (선 자체는 clip 으로 잘라 그리므로 정보가 사라지지는 않는다).
+
+    @staticmethod
+    def _s_범례(li_항목):
+        """ 패널 바로 밑에 그 패널의 계열만 나열한다 (그래프 넷을 다 보고 나서 찾지 않도록).
+            SVG 밖 HTML 로 두는 이유는 화면이 좁아져도 글자가 작아지지 않고 줄바꿈되기 때문이다. """
+        return ('<div class="lg">' + ''.join(
+            (f'<span><span class="tag ln" style="border-color:{s_색}"></span>{s_라벨}</span>'
+             if b_점선 else
+             f'<span><span class="tag" style="background:{s_색}"></span>{s_라벨}</span>')
+            for s_색, s_라벨, b_점선 in li_항목) + '</div>')
+
     def s_차트(self, dic_x, dic_문턱):
-        """ 한 거래의 4단 그래프 (가격 / 진입성분 / 강도계열 / 체결 크기·빈도) """
+        """ 한 거래의 4단 그래프 (가격 / 진입성분 / 강도계열 / 체결 크기·빈도)
+
+            패널마다 SVG 를 따로 그리고 그 아래에 범례를 붙인다 - 넷을 모아 맨 밑에 두면
+            어느 선이 어느 칸의 것인지 되짚어야 해서 읽기가 어렵다.
+            폭(viewBox)이 전부 같으므로 패널을 나눠도 시간축은 그대로 맞는다. """
         c = dic_x['계열']
         a_x = np.asarray(c['초'], dtype=float)
         n_x0, n_x1 = self.N_여백L, self.N_폭 - self.N_여백R
-        n_높이전체 = 22 + sum(h + 34 for _, h, _, _, _ in self.LI_패널) + 12
-        n_상단, li_svg, li_범례 = 22, list(), list()
+        n_상단 = self.N_상단여백
+        li_블록 = list()
 
-        for s_제목, n_h, li_좌, li_우, li_문턱 in self.LI_패널:
+        b_웜업 = a_x >= a_x[0] + self.N_눈금웜업      # 눈금 계산에서 앞 1분을 뺀다
+        if not b_웜업.any():
+            b_웜업 = np.ones(len(a_x), dtype=bool)
+
+        def n_px(n_t):
+            return n_x0 + (n_x1 - n_x0) * (n_t - a_x[0]) / max(1, a_x[-1] - a_x[0])
+
+        for n_p, (s_제목, n_h, li_좌, li_우, li_문턱, b_강건) in enumerate(self.LI_패널):
+            b_끝 = n_p == len(self.LI_패널) - 1
             li_문턱 = [(k, dic_문턱.get(k) if v is None else v) for k, v in li_문턱]
             li_문턱 = [(k, v) for k, v in li_문턱 if v is not None]
-            li_svg.append(f'<text x="{n_x0}" y="{n_상단 - 6}" fill="#8b949e" font-size="11.5">'
-                          f'{s_제목}</text>'
-                          f'<rect x="{n_x0}" y="{n_상단}" width="{n_x1 - n_x0}" height="{n_h}" '
-                          f'fill="#0d1117" stroke="#21262d"/>')
+            s_clip = f'clip_{dic_x["코드"]}_{dic_x["진입"]}_{n_p}'
+            li_svg = [f'<defs><clipPath id="{s_clip}"><rect x="{n_x0}" y="{n_상단}" '
+                      f'width="{n_x1 - n_x0}" height="{n_h}"/></clipPath></defs>'
+                      f'<text x="{n_x0}" y="{n_상단 - 6}" fill="#8b949e" font-size="11.5">'
+                      f'{s_제목}</text>'
+                      f'<rect x="{n_x0}" y="{n_상단}" width="{n_x1 - n_x0}" height="{n_h}" '
+                      f'fill="#0d1117" stroke="#21262d"/>']
+            li_범례, b_문턱있음 = list(), False
             for b_우, li_계, s_앵커, n_라벨x in [(False, li_좌, 'end', n_x0 - 6),
                                             (True, li_우 or [], 'start', n_x1 + 6)]:
                 if not li_계:
                     continue
                 li_해당문턱 = [v for k, v in li_문턱 if any(k == kk for kk, *_ in li_계)]
-                t_범위 = self._t_범위(
-                    np.concatenate([np.asarray(c[k], dtype=float) for k, *_ in li_계]),
-                    li_해당문턱)
+                a_눈금 = np.concatenate(
+                    [np.asarray(c[k], dtype=float)[b_웜업 if b_강건 else slice(None)]
+                     for k, *_ in li_계])
+                t_범위 = self._t_범위(a_눈금, li_해당문턱, b_강건)
+                s_형식 = ',.2f' if b_우 else ',.0f'
                 for n_v in ([t_범위[0], t_범위[1]] if b_우
                             else [t_범위[0], sum(t_범위) / 2, t_범위[1]]):
                     n_py = n_상단 + n_h * (1 - (n_v - t_범위[0]) / (t_범위[1] - t_범위[0]))
                     li_svg.append(f'<text x="{n_라벨x}" y="{n_py + 3.5:.1f}" '
                                   f'text-anchor="{s_앵커}" fill="#6e7681" font-size="10">'
-                                  f'{n_v:,.2f}</text>' if b_우 else
-                                  f'<text x="{n_라벨x}" y="{n_py + 3.5:.1f}" '
-                                  f'text-anchor="{s_앵커}" fill="#6e7681" font-size="10">'
-                                  f'{n_v:,.0f}</text>')
+                                  f'{n_v:{s_형식}}</text>')
                 for s_k, s_색, n_w, s_라벨 in li_계:
-                    li_svg.append(self._s_선(a_x, np.asarray(c[s_k], dtype=float), t_범위,
-                                             n_상단, n_h, s_색, n_w,
-                                             ' stroke-dasharray="4 3"' if s_k == 'stop' else ''))
-                    li_범례.append((s_색, s_라벨 + (' (우축)' if b_우 else '')))
+                    b_점선 = s_k == 'stop'
+                    li_svg.append(f'<g clip-path="url(#{s_clip})">'
+                                  + self._s_선(a_x, np.asarray(c[s_k], dtype=float), t_범위,
+                                               n_상단, n_h, s_색, n_w,
+                                               ' stroke-dasharray="4 3"' if b_점선 else '')
+                                  + '</g>')
+                    li_범례.append((s_색, s_라벨 + (' (우축)' if b_우 else ''), b_점선))
                 for n_v in li_해당문턱:
                     if t_범위[0] <= n_v <= t_범위[1]:
                         n_py = n_상단 + n_h * (1 - (n_v - t_범위[0]) / (t_범위[1] - t_범위[0]))
@@ -395,26 +438,30 @@ class Dashboard:
                                       f'y2="{n_py:.1f}" stroke="#3fb950" stroke-width="1" '
                                       f'stroke-dasharray="5 4" opacity="'
                                       f'{".6" if b_우 else "1"}"/>')
+                        b_문턱있음 = True
             for n_t, s_색 in [(dic_x['진입'], '#3fb950'), (dic_x['청산'], '#8b949e')]:
-                n_px = n_x0 + (n_x1 - n_x0) * (n_t - a_x[0]) / max(1, a_x[-1] - a_x[0])
-                li_svg.append(f'<line x1="{n_px:.1f}" y1="{n_상단}" x2="{n_px:.1f}" '
-                              f'y2="{n_상단 + n_h}" stroke="{s_색}" stroke-width="1.3" '
-                              f'opacity=".85"/>')
-            n_상단 += n_h + 34
+                li_svg.append(f'<line x1="{n_px(n_t):.1f}" y1="{n_상단}" '
+                              f'x2="{n_px(n_t):.1f}" y2="{n_상단 + n_h}" stroke="{s_색}" '
+                              f'stroke-width="1.3" opacity=".85"/>')
 
-        for n_i in range(7):
-            n_t = a_x[0] + (a_x[-1] - a_x[0]) * n_i / 6
-            n_px = n_x0 + (n_x1 - n_x0) * n_i / 6
-            li_svg.append(f'<text x="{n_px:.1f}" y="{n_높이전체 - 4}" text-anchor="middle" '
-                          f'fill="#8b949e" font-size="10.5">'
-                          f'{int(n_t) // 3600:02d}:{int(n_t) % 3600 // 60:02d}:'
-                          f'{int(n_t) % 60:02d}</text>')
+            n_높이 = n_상단 + n_h + (24 if b_끝 else 6)
+            if b_끝:                                  # 시간축은 맨 아래 칸에만 (폭이 같아 다 맞는다)
+                for n_i in range(7):
+                    n_t = a_x[0] + (a_x[-1] - a_x[0]) * n_i / 6
+                    li_svg.append(
+                        f'<text x="{n_x0 + (n_x1 - n_x0) * n_i / 6:.1f}" y="{n_높이 - 6}" '
+                        f'text-anchor="middle" fill="#8b949e" font-size="10.5">'
+                        f'{int(n_t) // 3600:02d}:{int(n_t) % 3600 // 60:02d}:'
+                        f'{int(n_t) % 60:02d}</text>')
 
-        li_범례2, set_본 = list(), set()
-        for s_색, s_라벨 in li_범례:
-            if s_라벨 not in set_본:
-                set_본.add(s_라벨)
-                li_범례2.append((s_색, s_라벨))
+            if b_문턱있음:
+                li_범례.append(('#3fb950', '현행 문턱', True))
+            if n_p == 0:        # 진입·청산 세로선은 전 패널 공통이라 첫 칸에서만 설명한다
+                li_범례 += [('#3fb950', '진입', False), ('#8b949e', '청산', False)]
+            li_블록.append(f'<svg viewBox="0 0 {self.N_폭} {n_높이}" role="img" '
+                          f'aria-label="{dic_x["종목명"]} {s_제목}">{"".join(li_svg)}</svg>'
+                          + self._s_범례(li_범례))
+
         return (f'<div class="chart">'
                 f'<div class="chd"><b>{dic_x["종목명"]}</b> '
                 f'<span class="mu">{dic_x["코드"]} · {dic_x["구간"]}</span> '
@@ -423,14 +470,7 @@ class Dashboard:
                 f'<span>{s_pct(dic_x["수익률"])}</span> '
                 f'<span class="mu">최대이익 {dic_x["mfe"]:+.2f}% · '
                 f'최대손실 {dic_x["mae"]:+.2f}%</span></div>'
-                f'<svg viewBox="0 0 {self.N_폭} {n_높이전체}" role="img" '
-                f'aria-label="{dic_x["종목명"]} 지표 변화">{"".join(li_svg)}</svg>'
-                f'<div class="lg">'
-                + ''.join(f'<span><span class="tag" style="background:{s_색}"></span>{s_라벨}'
-                          f'</span>' for s_색, s_라벨 in li_범례2)
-                + '<span><span class="tag" style="background:#3fb950"></span>현행 문턱</span>'
-                  '<span><span class="tag" style="background:#8b949e"></span>청산</span>'
-                  '</div></div>')
+                + ''.join(li_블록) + '</div>')
 
     def li_지표변화(self, wf, s_일자):
         from analyzer import bot_백테스팅_틱기반매수세 as BT
