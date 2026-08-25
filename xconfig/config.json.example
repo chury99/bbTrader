@@ -20,15 +20,15 @@
     "로그이름_rotator": "bb_trader",
     "로그이름_error": "bb_error",
     "파일보관기간(일)_analyzer": {
-        "mac": "30",
+        "mac": "180",
         "win": "180"
     },
     "파일보관기간(일)_collector": {
-        "mac": "30",
+        "mac": "180",
         "win": "180"
     },
     "파일보관기간(일)_trader": {
-        "mac": "30",
+        "mac": "180",
         "win": "180"
     },
     "계좌번호": "키움 계좌번호 - kiwoomKey.json 의 최상위 키와 동일하게",

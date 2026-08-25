@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-""" 프로젝트 진척 대시보드 - 성능·안정성·목표대비 진척을 한 장으로 (매일 백테스팅 직후 자동 실행)
+""" 대시보드 - 네 세트를 나란히 놓고 하루를 마감한다 (매일 백테스팅 직후 자동 실행)
 
-    보여주는 것
-      1. 한눈에   - 백테 계좌, 홀드아웃 누적, 1차 판정선까지 남은 거리, 당일 성적
-      2. 성능     - 개발표본 vs 홀드아웃, 구간1/구간2 분해, 최근 추이
-      3. 안정성   - 손실일 비율, 최대낙폭, 하루빼기 최악, 팻테일 의존도, 통계 유의성, 실매매 괴리
-      +. 최적화   - 파라미터 고정 vs 일단위 재최적화 vs 종목별 재최적화 세 방식 비교
-      4. 진척     - 판정선(90건 / 180건, 롤링 재검증 37거래일, 종목별 240 종목·일) 대비 진행률
-      5. 앞으로   - 최근 거래속도로 환산한 남은 거래일과 예상 도달일
+    보여주는 것 - 세 덩어리뿐이다
+      1. 요약        - 1번 고정 / 2번 롤링 / 3번 종목별 / 오라클 을
+                      틱 보유 전 구간과 최근 20거래일 두 창에서 비교
+      2. 일별 실적    - 같은 네 세트의 일자별 손익과 3번-1번 차이
+      3. 당일 지표변화 - 그날 잡은 거래마다 1초봉 가격과 지표들이 진입 전후로 어떻게 움직였는지.
+                      성적을 재는 자리가 아니라 "무엇을 더 봤어야 했나"를 찾는 자리다.
 
-    판정선 근거는 2026-08-04 표본요구량 계산(관측분포 부트스트랩, 양측 95%·검정력 80%):
-      거래당 참 기대값 +0.90% 가정 → 90건 / +0.64% 가정 → 180건.
+    네 세트는 전부 같은 격자(648칸)·같은 시뮬·같은 검증일 위에서 나온다.
+    청산·구간2·자금관리·비용은 현행과 동일하고 바뀌는 축은 구간1 진입·트레일뿐이다.
+    학습창을 못 채운 초기 구간은 '현행 파라미터로 매매한 것'으로 본다 - 그렇게 두지 않으면
+    방식마다 분모가 달라져 같은 표에 올릴 수 없다.
+
     ※ 이 도구는 읽기 전용이다. 백테 산출물을 만들지도 고치지도 않는다.
     ※ 카카오 발송에는 일절 관여하지 않는다 (텔레그램만 사용).
 
@@ -18,10 +20,8 @@
         python analyzer/대시보드.py              # 리포트 생성 + 텔레그램 발송
         python analyzer/대시보드.py --no-send     # 생성만 (발송 안 함)
 """
-import glob
 import json
 import os
-import re
 import sys
 import unicodedata
 import urllib.parse
@@ -32,19 +32,18 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ut
 
-# ===== 판정 기준 (근거 없이 바꾸지 말 것) =====
-S_개발표본_종료 = '20260724'      # 이 날짜까지가 로직 개발에 쓰인 표본
-N_계좌_시작 = 10_000_000          # 백테 계좌 시작 자본
-N_목표_건수1 = 90                 # 거래당 기대값 +0.90% 가정 시 판정 가능 건수
-N_목표_건수2 = 180                # 거래당 기대값 +0.64% 가정 시 판정 가능 건수
-N_목표_롤링창 = 10                # 롤링 walk-forward 학습창 (일)
-N_목표_롤링폴드 = 27              # 그 창에서 참 차이 +1.0%p/일 을 잡는 데 필요한 폴드 수
-N_목표_롤링일 = N_목표_롤링창 + N_목표_롤링폴드   # 총 필요 거래일 (창을 채운 뒤부터 폴드가 생긴다)
-N_목표_종목일 = 240               # 종목별 롤링워크포워드 재판정선 (튜닝을 적용한 종목·일 수)
-                                #   2026-08-20 관측(짝지은 차이 평균 +0.157%p, 표준편차 1.234)이
-                                #   유지될 때 |t| = 1.96 에 닿는 표본이 237건이라 240으로 둔다.
-                                #   검정력 80%까지 보려면 485건이 필요하다 - 그건 훨씬 뒤다.
-S_리포트폴더 = '클로드분석결과'      # 서버 웹폴더(server_kakao) 하위 폴더명
+# ===== 기준 (근거 없이 바꾸지 말 것) =====
+N_계좌_시작 = 10_000_000          # 계좌 환산 시작 자본 (각 창의 첫날에 재출발한다고 본다)
+N_분할1 = 4.0                    # 구간1 진입당 총자본 ÷ 분할수 (BT._구간1_분할수)
+N_분할2 = 3.0                    # 구간2 진입당 총자본 ÷ 분할수 (BT._T_분할수)
+N_최근창 = 20                     # 요약 오른쪽 칸에 쓰는 최근 거래일 수
+S_리포트폴더 = '클로드분석결과'     # 서버 웹폴더(server_kakao) 하위 폴더명
+
+DIC_이름 = {'고정': '1번 고정', '롤링': '2번 롤링', '종목별': '3번 종목별', '오라클': '오라클'}
+DIC_색 = {'고정': '#d29922', '롤링': '#a371f7', '종목별': '#39c5cf', '오라클': '#3fb950'}
+# 텔레그램 라벨은 전각만 써야 줄이 맞는다 (아래 s_행 주석 참조) - 숫자도 전각으로 쓴다
+DIC_텔레라벨 = {'고정': '１번 고정', '롤링': '２번 롤링', '종목별': '３번 종목', '오라클': '오라클'}
+N_텔레_값폭 = 14      # '+277.5+182.6' 까지 들어가는 폭 (전 행이 같아야 줄이 맞는다)
 
 CSS = """
 :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2128;--bd:#30363d;--tx:#c9d1d9;--mu:#8b949e;
@@ -56,42 +55,35 @@ line-height:1.7;font-size:15px;}
 .wrap{max-width:1180px;margin:0 auto;padding:40px 24px 80px;}
 h1{font-size:30px;margin:0 0 6px;letter-spacing:-.4px;}
 h2{font-size:21px;margin:52px 0 14px;padding-bottom:10px;border-bottom:1px solid var(--bd);}
-h3{font-size:16px;margin:26px 0 8px;color:#e6edf3;}
+h3{font-size:16px;margin:30px 0 8px;color:#e6edf3;}
 .sub{color:var(--mu);font-size:14px;margin-bottom:8px;}
 p{margin:10px 0;}
 .lead{background:var(--panel);border:1px solid var(--bd);border-left:3px solid var(--wn);
 border-radius:6px;padding:16px 20px;margin:22px 0;}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:18px 0;}
-.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:12px 0;}
-@media (max-width:900px){.grid4{grid-template-columns:repeat(2,1fr);}}
-@media (max-width:520px){.grid4{grid-template-columns:1fr;}}
-.rowlbl{color:var(--mu);font-size:12px;letter-spacing:.4px;margin:20px 0 2px;
-text-transform:uppercase;}
-.card{background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:16px 18px;}
-.card .k{color:var(--mu);font-size:12.5px;margin-bottom:6px;}
-.card .v{font-size:25px;font-weight:600;letter-spacing:-.5px;}
-.card .n{color:var(--mu);font-size:12px;margin-top:4px;}
 .tw{overflow-x:auto;margin:16px 0;-webkit-overflow-scrolling:touch;}
-table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px;}
-th,td{border:1px solid var(--bd);padding:8px 11px;text-align:right;white-space:nowrap;}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:560px;}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:right;white-space:nowrap;}
 th{background:var(--panel2);color:#e6edf3;font-weight:600;text-align:center;}
 td.l,th.l{text-align:left;} td.c{text-align:center;}
 tbody tr:nth-child(odd){background:rgba(255,255,255,.017);}
 tr.sum td{border-top:2px solid var(--bd);font-weight:600;background:var(--panel2);}
+tr.orc td{background:rgba(63,185,80,.06);}
 .up{color:var(--up);} .dn{color:var(--dn);} .mu{color:var(--mu);}
 .ok{color:var(--ok);font-weight:600;} .wn{color:var(--wn);}
-.pie{text-align:center;padding:16px 14px 14px;}
-.pie .t{color:#e6edf3;font-size:13.5px;font-weight:600;}
-.pie svg{width:124px;height:124px;display:block;margin:8px auto 0;}
-.pie .pv{font-size:25px;font-weight:600;fill:#e6edf3;}
-.pie .pn{font-size:11.5px;fill:var(--mu);}
-.pie .s{font-size:12.5px;margin-top:4px;color:var(--tx);}
-.pie .m{color:var(--mu);font-size:11.5px;margin-top:3px;line-height:1.5;}
-ul{margin:10px 0;padding-left:20px;} li{margin:6px 0;}
+.tag{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;
+vertical-align:middle;}
+ul{margin:10px 0;padding-left:20px;} li{margin:7px 0;}
 .ft{margin-top:60px;padding-top:18px;border-top:1px solid var(--bd);color:var(--mu);font-size:12.5px;}
 .note{color:var(--mu);font-size:13px;margin:8px 0;}
 code{background:var(--panel2);border:1px solid var(--bd);border-radius:4px;
 padding:1px 6px;font-size:12.5px;color:#e6edf3;}
+.chart{background:var(--panel);border:1px solid var(--bd);border-radius:6px;
+padding:14px 12px 8px;margin:14px 0;}
+.chart svg{width:100%;height:auto;display:block;}
+.chd{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:baseline;margin-bottom:6px;
+padding:0 4px;}
+.chd b{font-size:15px;color:#e6edf3;}
+.lg{display:flex;flex-wrap:wrap;gap:14px;color:var(--mu);font-size:12px;padding:6px 4px 0;}
 """
 
 
@@ -106,8 +98,6 @@ def s_pct(v, n=2, s_단위='%'):
 #   텔레그램의 고정폭 글꼴에는 한글이 없어 시스템 글꼴로 대체되고, 그 한글 폭은 영문의 정확히 2배가 아니다.
 #   그래서 '한글=2칸'으로 계산해 공백을 채우면 줄이 어긋난다(2026-08-04 실제 화면에서 확인).
 #   해법: 라벨은 전각(한글·전각공백 U+3000)만, 값은 ASCII만 쓰고 각각 글자 수를 고정한다.
-#         그러면 한글과 영문의 폭 비율이 얼마이든 두 칸의 폭이 줄마다 같아져 항상 맞는다.
-#   ※ 전각으로 통일하면 <code> 없이도 맞고 글자도 커지지만, 숫자 모양이 낯설어 원래 크기로 되돌렸다.
 S_전각공백 = '　'
 N_라벨_전각 = 7        # 라벨 칸 (전각 글자 수)
 N_값_ASCII = 10       # 값 칸 (ASCII 글자 수)
@@ -125,37 +115,14 @@ def b_전각만(s):
     return all(unicodedata.east_asian_width(c) in ('W', 'F') for c in str(s))
 
 
-def s_도넛(s_제목, n_현재, n_목표, s_단위='', s_비고=''):
-    """ 진행률 도넛 (외부 라이브러리 없이 SVG 원호로 그린다) """
-    n_율 = min(100.0, n_현재 / n_목표 * 100) if n_목표 else 0.0
-    n_둘레 = 2 * np.pi * 52
-    n_호 = n_둘레 * n_율 / 100
-    n_남음 = max(0, n_목표 - n_현재)
-    return f"""<div class="card pie">
-<div class="t">{s_제목}</div>
-<svg viewBox="0 0 120 120" role="img" aria-label="{s_제목} {n_율:.0f}%">
-<circle cx="60" cy="60" r="52" fill="none" stroke="#21262d" stroke-width="13"/>
-<circle cx="60" cy="60" r="52" fill="none" stroke="#388bfd" stroke-width="13"
- stroke-linecap="round" stroke-dasharray="{n_호:.2f} {n_둘레 - n_호:.2f}"
- transform="rotate(-90 60 60)"/>
-<text class="pv" x="60" y="57" text-anchor="middle" dominant-baseline="middle">{n_율:.0f}%</text>
-<text class="pn" x="60" y="77" text-anchor="middle">{n_현재:,.0f} / {n_목표:,.0f}{s_단위}</text>
-</svg>
-<div class="s">{n_남음:,.0f}{s_단위} 남음</div>
-<div class="m">{s_비고}</div>
-</div>"""
-
-
 # noinspection NonAsciiCharacters,PyPep8Naming,SpellCheckingInspection
 class Dashboard:
-    """ 진척 대시보드 생성 및 발송 """
+    """ 대시보드 생성 및 발송 """
 
     def __init__(self):
         dic_폴더 = ut.폴더manager.FolderManager().dic_폴더정보
         self.folder_백테 = os.path.join(dic_폴더['분석|백테스팅'], '클로드_틱기반매수세')
         self.folder_거래 = os.path.join(self.folder_백테, '30_거래내역')
-        self.folder_결과 = os.path.join(self.folder_백테, '40_결과정리')
-        self.folder_주문 = dic_폴더['매수매도|주문체결']
 
         log = ut.로그maker.LogMaker(s_파일명='대시보드', s_로그명='로그이름_analyzer')
         self.make_로그 = log.make_로그
@@ -170,544 +137,430 @@ class Dashboard:
                      f'{os.path.basename(dic_서버["folder"]["server_kakao"])}/{S_리포트폴더}')
 
     # =================================================================
-    # 자료 수집
-    # =================================================================
-    def df_거래(self):
-        """ 30_거래내역 전량 (일자·구간·수익률) """
-        li = list()
-        for path in sorted(glob.glob(os.path.join(self.folder_거래, 'df_거래내역_*.pkl'))):
-            df = pd.read_pickle(path)
-            if len(df):
-                li.append(df[['일자', '종목코드', '종목명', '수익률', '구간']])
-        return pd.concat(li, ignore_index=True) if li else pd.DataFrame()
-
-    def df_결과(self):
-        """ 40_결과정리 최신본 (일자별 계좌잔고) """
-        li = sorted(glob.glob(os.path.join(self.folder_결과, 'df_결과정리_*.pkl')))
-        return pd.read_pickle(li[-1]) if li else pd.DataFrame()
-
-    def df_실매매(self):
-        """ 주문체결 원장 → 일자·종목별 실현 수익률 (비용 후) """
-        li = list()
-        for path in sorted(glob.glob(os.path.join(self.folder_주문, '주문체결_*.csv'))):
-            s_일자 = re.findall(r'\d{8}', os.path.basename(path))[0]
-            try:
-                d = pd.read_csv(path, encoding='cp949', dtype=str, on_bad_lines='skip')
-            except (OSError, UnicodeDecodeError, pd.errors.ParserError):
-                continue
-            d = d[d['주문상태'] == '체결']
-            if not len(d):
-                continue
-
-            # 체결누계금액·체결량·수수료·세금은 주문번호 단위 누계값 - 주문번호별 마지막 행만 합산
-            def n_누계(g, s_컬럼):
-                n = 0
-                for _, gg in g.groupby('주문번호', sort=False):
-                    n += pd.to_numeric(gg[s_컬럼], errors='coerce').fillna(0).iloc[-1]
-                return float(n)
-
-            for s_종목, g in d.groupby('종목코드'):
-                g매수, g매도 = g[g['매도수구분'] == '매수'], g[g['매도수구분'] == '매도']
-                if not len(g매수) or not len(g매도):
-                    continue
-                n_매수금, n_매도금 = n_누계(g매수, '체결누계금액'), n_누계(g매도, '체결누계금액')
-                if n_매수금 <= 0:
-                    continue
-                n_비용 = n_누계(g, '당일매매수수료') + n_누계(g, '당일매매세금')
-                li.append(dict(일자=s_일자, 종목코드=s_종목,
-                               순손익=n_매도금 - n_매수금 - n_비용, 매수금=n_매수금,
-                               수익률=(n_매도금 - n_매수금 - n_비용) / n_매수금 * 100))
-        return pd.DataFrame(li)
-
-    # =================================================================
-    # 지표 계산
+    # 집계
     # =================================================================
     @staticmethod
-    def dic_집계(df):
-        r = df['수익률'].values
-        if not len(r):
-            return dict(일수=0, 건수=0, 합계=0.0, 거래당=np.nan, 승률=np.nan,
-                        최대=np.nan, 최소=np.nan, 손실일=0)
-        sri_일 = df.groupby('일자')['수익률'].sum()
-        return dict(일수=int(df['일자'].nunique()), 건수=len(r), 합계=float(r.sum()),
-                    거래당=float(r.mean()), 승률=float((r > 0).mean() * 100),
-                    최대=float(r.max()), 최소=float(r.min()),
-                    손실일=int((sri_일 < 0).sum()))
-
-    @staticmethod
-    def n_loo(df):
-        """ 하루빼기 최악 - 가장 좋은 하루를 빼도 합계가 남는가 """
-        sri = df.groupby('일자')['수익률'].sum()
-        return float(sri.sum() - sri.max()) if len(sri) else np.nan
-
-    @staticmethod
-    def n_t값(df):
-        r = df['수익률'].values
-        if len(r) < 3 or r.std(ddof=1) == 0:
-            return np.nan
-        return float(r.mean() / (r.std(ddof=1) / np.sqrt(len(r))))
-
-    @staticmethod
-    def n_팻테일(df):
-        """ 상위 3건이 총이익에서 차지하는 비중 % """
-        r = df['수익률'].values
-        n_익 = r[r > 0].sum()
-        return float(np.sort(r)[-3:].sum() / n_익 * 100) if n_익 > 0 else np.nan
-
-    @staticmethod
-    def n_낙폭(df_결과):
-        """ 계좌 잔고 기준 최대 낙폭 % """
-        if not len(df_결과) or '거래후예수금' not in df_결과:
-            return np.nan
-        ary = pd.to_numeric(df_결과['거래후예수금'], errors='coerce').ffill().values
-        ary = np.concatenate(([N_계좌_시작], ary))
-        return float(((ary - np.maximum.accumulate(ary)) / np.maximum.accumulate(ary)).min() * 100)
+    def dic_기간(dic_일별, s_방식, li_일자):
+        """ 한 방식의 한 구간 집계. 계좌는 구간별 분할수를 반영해 복리로 굴린다 """
+        n_손익 = sum(dic_일별[s_방식][d]['손익'] for d in li_일자)
+        n_건수 = sum(dic_일별[s_방식][d]['건수'] for d in li_일자)
+        n_승 = sum(dic_일별[s_방식][d]['승'] for d in li_일자)
+        n_잔고 = float(N_계좌_시작)
+        for d in li_일자:
+            x = dic_일별[s_방식][d]
+            n_잔고 *= (1 + (x['손익1'] / N_분할1 + x['손익2'] / N_분할2) / 100)
+        return dict(손익=n_손익, 건수=n_건수, 일수=len(li_일자), 잔고=n_잔고,
+                    승률=(n_승 / n_건수 * 100 if n_건수 else np.nan),
+                    거래당=(n_손익 / n_건수 if n_건수 else np.nan),
+                    손실일=sum(1 for d in li_일자 if dic_일별[s_방식][d]['손익'] < -1e-9),
+                    계좌=(n_잔고 / N_계좌_시작 - 1) * 100)
 
     # =================================================================
-    # 리포트 생성
+    # 구획 1·2 — 요약 / 일별
     # =================================================================
-    def li_롤링비교(self):
-        """ 파라미터 고정(현행) vs 매일 직전 N일 재최적화(튜닝) 비교 구획
-
-            analyzer/롤링워크포워드.py 가 손익행렬을 캐시에 쌓고 새 일자만 증분 계산한다.
-            무거운 계산이므로 실패하면 조용히 건너뛴다 — 대시보드 본체를 막지 않는다. """
-        try:
-            from analyzer.롤링워크포워드 import 롤링워크포워드, N_학습창
-            wf = 롤링워크포워드()
-            dic_r = wf.평가(n_학습창=N_학습창)
-        except Exception as e:                                  # noqa: BLE001
-            self.make_로그(f'롤링 비교 생략 - {type(e).__name__}: {e}')
-            return list()
-        if not dic_r:
-            return list()
-
-        B = ['<h2>파라미터 고정 vs 매일 재최적화</h2>']
-        B.append(f'<p class="mu">직전 {dic_r["학습창"]}거래일로 진입 조건 '
-                 f'{dic_r["조합수"]}칸을 훑어 최적을 고르고, 그 값을 <b>다음 미지의 1일</b>에 '
-                 f'적용했다면 어땠는지. 청산·구간2·자금관리는 전부 현행 그대로이고 '
-                 f'구간1 진입 축만 바꾼다. 격자에는 아직 매매에 쓰지 않는 후보지표'
-                 f'(체결강도·체결횟수강도·단위매수량 등)가 포함돼 있다.</p>')
-        B.append('<div class="tw"><table><thead><tr><th class="l">방식</th><th>폴드</th>'
-                 '<th>손익 합</th><th>비고</th></tr></thead><tbody>')
-        for s_라벨, n_값, s_설명 in [
-                ('현행 (파라미터 고정)', dic_r['현행'], '지금 쓰는 값 그대로'),
-                (f'매일 재최적화 (직전 {dic_r["학습창"]}일)', dic_r['튜닝'],
-                 f'튜닝 우세 {dic_r["승"]}/{len(dic_r["폴드"])}일 · '
-                 f'현행과 같은 값을 고른 날 {dic_r["동일"]}일'),
-                ('격자 무작위 (대조군)', dic_r['무작위'],
-                 f'{dic_r["조합수"]}칸에서 아무거나 골랐을 때의 평균'),
-                ('오라클 (상한)', dic_r['오라클'], '검증일을 미리 알았을 때 — 달성 불가')]:
-            B.append(f'<tr><td class="l">{s_라벨}</td>'
-                     f'<td>{len(dic_r["폴드"]) if "오라클" not in s_라벨 else ""}</td>'
-                     f'<td>{s_pct(n_값)}</td>'
-                     f'<td class="l"><span class="mu">{s_설명}</span></td></tr>')
+    def li_요약(self, dic_일별, li_일자, li_최근):
+        B = ['<h2>요약</h2>']
+        B.append('<div class="tw"><table><thead><tr><th class="l">방식</th>'
+                 f'<th colspan="4">전체 {li_일자[0]}~{li_일자[-1]} ({len(li_일자)}일)</th>'
+                 f'<th colspan="4">최근 {len(li_최근)}일 {li_최근[0]}~{li_최근[-1]}</th></tr>'
+                 '<tr><th class="l"></th>'
+                 '<th>손익 합</th><th>거래</th><th>승률</th><th>계좌</th>'
+                 '<th>손익 합</th><th>거래</th><th>승률</th><th>계좌</th></tr></thead><tbody>')
+        for s_방식 in DIC_이름:
+            li_x = [self.dic_기간(dic_일별, s_방식, li) for li in (li_일자, li_최근)]
+            B.append(f'<tr{" class=\'orc\'" if s_방식 == "오라클" else ""}>'
+                     f'<td class="l"><span class="tag" style="background:{DIC_색[s_방식]}">'
+                     f'</span>{DIC_이름[s_방식]}</td>'
+                     + ''.join(f'<td>{s_pct(x["손익"])}</td><td>{x["건수"]}</td>'
+                               f'<td>{x["승률"]:.0f}%</td><td>{s_pct(x["계좌"])}</td>'
+                               for x in li_x) + '</tr>')
         B.append('</tbody></table></div>')
-        B.append(f'<p class="mu">재최적화 결과는 격자 {dic_r["조합수"]}칸 중 '
-                 f'<b>상위 {dic_r["튜닝백분위"]:.0f}%</b> 자리다. '
-                 f'무작위 평균({s_pct(dic_r["무작위"])})과 견줘야 정보를 쓴 것인지 갈린다 — '
-                 f'격자를 훑어 최선을 고르는 과정 자체가 다중비교라 그냥 좋아 보일 수 있다.</p>')
 
-        B.append('<h3>폴드별</h3>')
-        B.append('<div class="tw"><table><thead><tr><th>검증일</th><th>재최적화</th>'
-                 '<th>현행</th><th>오라클</th><th class="l">그날 채택된 조건</th>'
-                 '</tr></thead><tbody>')
-        for x in dic_r['폴드'][-10:]:
-            B.append(f'<tr><td>{x["검증일"]}</td>'
-                     f'<td>{s_pct(x["튜닝"])} <span class="mu">({x["건수"]}건)</span></td>'
-                     f'<td>{s_pct(x["현행"])}</td><td>{s_pct(x["오라클"])}</td>'
-                     f'<td class="l"><span class="mu">{wf.s_파라미터(x["파라미터"])}</span></td>'
-                     f'</tr>')
-        B.append('</tbody></table></div>')
-        B.append('<p class="mu">이 비교는 <b>참고용</b>이다. 폴드가 아직 적고 학습창이 서로 '
-                 '겹쳐 독립 시행이 아니며, 결과가 몇 날의 큰 차이에 기대고 있을 수 있다. '
-                 '재최적화가 계속 앞선다면 그때 후보를 <b>사전 등록</b>해 현행과 나란히 '
-                 '표본외 기록을 쌓는 것이 다음 단계다.</p>')
+        d_고1, d_고2 = (self.dic_기간(dic_일별, '고정', li) for li in (li_일자, li_최근))
+        d_종1, d_종2 = (self.dic_기간(dic_일별, '종목별', li) for li in (li_일자, li_최근))
+        d_롤1 = self.dic_기간(dic_일별, '롤링', li_일자)
+        li_순 = sorted(['고정', '롤링', '종목별'],
+                       key=lambda m: -self.dic_기간(dic_일별, m, li_최근)['손익'])
+        B.append(f'<p class="note">최근 {len(li_최근)}일 기준 순위는 '
+                 f'<b>{" &gt; ".join(DIC_이름[m] for m in li_순)}</b> 순이다. '
+                 f'3번 종목별이 1번 고정보다 전체에서 {d_종1["손익"] - d_고1["손익"]:+.2f}%p, '
+                 f'최근 {len(li_최근)}일에서 {d_종2["손익"] - d_고2["손익"]:+.2f}%p 앞선다. '
+                 f'2번 롤링은 1번보다 {d_롤1["손익"] - d_고1["손익"]:+.2f}%p 뒤진다 — '
+                 f'하루 단위로 조합을 갈아끼우는 쪽은 아직 정보가 아니라 잡음을 따라가고 있다.<br>'
+                 f'계좌는 각 구간 첫날에 {N_계좌_시작 / 10000:,.0f}만원으로 재출발했다고 본 환산값이다'
+                 f'(진입당 총자본÷분할수, 구간1={N_분할1:.0f}·구간2={N_분할2:.0f}). '
+                 f'사이징이 총자본 비례라 자본 규모와는 무관하다.</p>')
         return B
 
-    def dic_종목별(self):
-        """ 종목별 롤링워크포워드 평가 - 진척 도넛과 아래 구획이 함께 쓴다
-
-            analyzer/종목별롤링워크포워드.py 가 손익행렬(종목 x 일자 x 648칸)을 캐시에 쌓고
-            새 일자만 증분 계산한다. 실패하면 조용히 None - 대시보드 본체를 막지 않는다. """
-        try:
-            from analyzer import 종목별롤링워크포워드 as MOD
-            z = MOD.종목별롤링워크포워드()
-            _, _, li_폴드, df_종목 = z.평가()
-        except Exception as e:                                  # noqa: BLE001
-            self.make_로그(f'종목별 롤링워크포워드 생략 - {type(e).__name__}: {e}')
-            return None
-        if not li_폴드:
-            return None
-        n_효과 = sum(x['튜닝분손익'] - x['튜닝분현행손익'] for x in li_폴드)
-        n_튜닝 = sum(x['튜닝'] for x in li_폴드)
-        ary = ((df_종목.loc[df_종목['튜닝'], '손익'] - df_종목.loc[df_종목['튜닝'], '현행손익']).values
-               if len(df_종목) else np.array([]))
-        n_t = (float(ary.mean() / (ary.std(ddof=1) / np.sqrt(len(ary))))
-               if len(ary) > 2 and ary.std(ddof=1) > 0 else np.nan)
-        return dict(폴드=li_폴드, 튜닝=n_튜닝, 효과=n_효과, t=n_t, 조합수=len(z.li_조),
-                    조회창=MOD.N_조회창, 학습창=MOD.N_학습창, 최소건수=MOD.N_최소학습건수,
-                    목적=MOD.S_목적, 대상=sum(x['대상'] for x in li_폴드),
-                    현행회귀=sum(x['현행회귀'] for x in li_폴드),
-                    하이브리드=sum(x['하이브리드손익'] for x in li_폴드),
-                    하이브리드건수=sum(x['하이브리드건수'] for x in li_폴드),
-                    현행=sum(x['현행손익'] for x in li_폴드),
-                    현행건수=sum(x['현행건수'] for x in li_폴드),
-                    오라클=sum(x['오라클손익'] for x in li_폴드),
-                    무작위=sum(x['무작위손익'] for x in li_폴드))
-
-    @staticmethod
-    def li_종목별비교(dic_z):
-        """ 종목마다 자기 과거로 고른 파라미터를 그 종목에만 적용했다면 어땠는지 """
-        if not dic_z:
-            return list()
-        B = ['<h2>종목별 재최적화 (하이브리드)</h2>']
-        B.append(f'<p class="mu">종목마다 직전 {dic_z["조회창"]}거래일 틱에서 그 종목이 나온 날을 모아 '
-                 f'최근 {dic_z["학습창"]}개 출현일로 격자 {dic_z["조합수"]}칸을 훑고, '
-                 f'거기서 고른 <b>그 종목 전용 조합</b>을 다음 미지의 1일에 적용했다면 어땠는지. '
-                 f'학습구간 거래가 {dic_z["최소건수"]}건 미만이면 고를 근거가 없다고 보아 '
-                 f'<b>현행 파라미터로 매매한다</b>(하이브리드). 1순위는 {dic_z["목적"]} 최대다. '
-                 f'격자·청산·구간2·자금관리는 위 구획과 완전히 동일하다.</p>')
-        B.append('<div class="tw"><table><thead><tr><th class="l">방식</th><th>거래</th>'
-                 '<th>손익 합</th><th class="l">비고</th></tr></thead><tbody>')
-        for s_라벨, n_값, n_건, s_설명 in [
-                ('현행 (파라미터 고정)', dic_z['현행'], dic_z['현행건수'], '지금 쓰는 값 그대로'),
-                ('종목별 재최적화 (하이브리드)', dic_z['하이브리드'], dic_z['하이브리드건수'],
-                 f'튜닝 적용 {dic_z["튜닝"]} 종목·일 · 현행 회귀 {dic_z["현행회귀"]} 종목·일'),
-                ('격자 무작위 (대조군)', dic_z['무작위'], None,
-                 f'{dic_z["조합수"]}칸에서 종목마다 아무거나 골랐을 때의 기대값'),
-                ('오라클 (상한)', dic_z['오라클'], None, '종목·일마다 정답을 미리 알았을 때 — 달성 불가')]:
-            B.append(f'<tr><td class="l">{s_라벨}</td>'
-                     f'<td>{n_건 if n_건 is not None else ""}</td>'
-                     f'<td>{s_pct(n_값)}</td>'
-                     f'<td class="l"><span class="mu">{s_설명}</span></td></tr>')
+    def li_일별(self, dic_일별, li_일자, li_최근):
+        B = ['<h2>일별 실적</h2>']
+        B.append('<div class="tw"><table><thead><tr><th>일자</th><th>대상</th>'
+                 + ''.join(f'<th>{DIC_이름[m]}</th>' for m in DIC_이름)
+                 + '<th>3번−1번</th></tr></thead><tbody>')
+        for d in li_일자:
+            x_종 = dic_일별['종목별'][d]
+            s_흐림 = '' if d in li_최근 else ' style="opacity:.55"'
+            B.append(f'<tr{s_흐림}><td>{d}</td>'
+                     f'<td>{x_종["대상"]}<span class="mu"> · 튜닝 {x_종["튜닝"]}</span></td>'
+                     + ''.join(f'<td>{s_pct(dic_일별[m][d]["손익"])}'
+                               f'<span class="mu"> ({dic_일별[m][d]["건수"]})</span></td>'
+                               for m in DIC_이름)
+                     + f'<td>{s_pct(x_종["손익"] - dic_일별["고정"][d]["손익"], s_단위="%p")}</td>'
+                       f'</tr>')
+        B.append('<tr class="sum"><td>합계</td>'
+                 f'<td>{sum(dic_일별["종목별"][d]["대상"] for d in li_일자)}<span class="mu"> · '
+                 f'{sum(dic_일별["종목별"][d]["튜닝"] for d in li_일자)}</span></td>'
+                 + ''.join(f'<td>{s_pct(self.dic_기간(dic_일별, m, li_일자)["손익"])}'
+                           f'<span class="mu"> '
+                           f'({self.dic_기간(dic_일별, m, li_일자)["건수"]})</span></td>'
+                           for m in DIC_이름)
+                 + f'<td>{s_pct(self.dic_기간(dic_일별, "종목별", li_일자)["손익"] - self.dic_기간(dic_일별, "고정", li_일자)["손익"], s_단위="%p")}</td></tr>')
         B.append('</tbody></table></div>')
-        B.append(f'<p class="mu">두 방식의 차이는 전부 <b>튜닝을 얹은 {dic_z["튜닝"]}개 종목·일</b>에서 나온다 — '
-                 f'그 순효과가 {s_pct(dic_z["효과"], s_단위="%p")}이고 '
-                 f'짝지은 차이의 t는 <b>{dic_z["t"]:.2f}</b>다. '
-                 f'나머지 {dic_z["현행회귀"]}개 종목·일은 양쪽이 같은 값으로 매매하므로 상쇄된다.</p>')
-
-        B.append('<h3>일자별</h3>')
-        B.append('<div class="tw"><table><thead><tr><th>검증일</th><th>대상</th><th>튜닝</th>'
-                 '<th>하이브리드</th><th>현행</th><th>튜닝분 순효과</th></tr></thead><tbody>')
-        for x in dic_z['폴드'][-10:]:
-            B.append(f'<tr><td>{x["검증일"]}</td><td>{x["대상"]}</td><td>{x["튜닝"]}</td>'
-                     f'<td>{s_pct(x["하이브리드손익"])} '
-                     f'<span class="mu">({x["하이브리드건수"]}건)</span></td>'
-                     f'<td>{s_pct(x["현행손익"])} <span class="mu">({x["현행건수"]}건)</span></td>'
-                     f'<td>{s_pct(x["튜닝분손익"] - x["튜닝분현행손익"], s_단위="%p")}</td></tr>')
-        B.append('</tbody></table></div>')
-        B.append(f'<p class="mu">2026-08-20 검증에서 이 방식은 대조군 다섯(검증창 축소·전후반 분리·'
-                 f'동률처리 무작위 300회·목적함수 짝비교·단일 고정조합)을 모두 통과했다. '
-                 f'특히 격자를 <b>사후에 다 보고 고른 단일 조합보다 낫다</b> — 어떤 전역 파라미터로도 '
-                 f'재현되지 않는다는 뜻이다. 다만 t는 아직 2에 못 미치고 순열검정 p = 0.19로 '
-                 f'<b>"종목 고유성" 자체는 미검출</b>이다. 표본 {N_목표_종목일} 종목·일에서 재판정하며, '
-                 f'그때까지 설정 다섯(조회창·학습창·최소건수·목적함수·동률처리)은 <b>동결</b>한다 — '
-                 f'지금 흔들면 통과한 대조군이 전부 무의미해진다.</p>')
+        B.append(f'<p class="note">괄호 안은 거래 건수. 흐린 줄은 최근 {len(li_최근)}일 구간 밖이다. '
+                 f'"대상"은 그날 매매대상으로 선정된 종목 수이고 "튜닝"은 그중 3번이 전용 조합을 '
+                 f'얹은 수다 — 나머지는 학습 근거가 없어 현행으로 매매한다.</p>')
         return B
 
+
+    # =================================================================
+    # 구획 3 — 당일 지표 변화
+    # =================================================================
+    # 패널 정의: (제목, 높이, 좌축 계열, 우축 계열, 현행 문턱)
+    LI_패널 = [
+        ('가격', 172, [('price', '#e6edf3', 2.0, '가격'), ('stop', '#d29922', 1.4, '스탑')],
+         None, []),
+        ('진입 성분 (지금 쓰는 축)', 118, [('체결률10', '#39c5cf', 1.6, '체결률(10초)')],
+         [('순매수10', '#a371f7', 1.6, '순매수비율(10초)')],
+         [('체결률10', None), ('순매수10', None)]),
+        ('강도 계열 (미사용 후보)', 118,
+         [('체결강도롤링', '#d29922', 1.6, '체결강도(60초)'),
+          ('체결강도누적', '#8b949e', 1.3, '체결강도(누적)'),
+          ('체결횟수강도롤링', '#39c5cf', 1.4, '체결횟수강도(60초)')], None,
+         [('체결강도롤링', 100.0)]),
+        ('체결 크기·빈도 (미사용 후보)', 118, [('매수횟수5', '#a371f7', 1.6, '매수횟수(5초평균)')],
+         [('단위비', '#d29922', 1.6, '단위매수÷매도')], [('단위비', 1.0)]),
+    ]
+    LI_지표 = ['체결률10', '순매수10', '체결강도롤링', '체결강도누적', '체결횟수강도롤링',
+             '매수횟수5', '단위비', '이격률']
+    DIC_라벨 = {'체결률10': '체결률(10초)', '순매수10': '순매수비율(10초)',
+              '체결강도롤링': '체결강도(60초)', '체결횟수강도롤링': '체결횟수강도(60초)',
+              '매수횟수5': '매수횟수(5초평균)', '단위비': '단위매수÷매도', '이격률': '고가대비 이격률'}
+    LI_표지표 = ['체결률10', '순매수10', '체결강도롤링', '체결횟수강도롤링', '매수횟수5',
+              '단위비', '이격률']
+    N_폭, N_여백L, N_여백R = 1080, 58, 58
+
+    def li_계열(self, wf, s_일자):
+        """ 그날 거래별로 1초봉 가격·지표 시계열과 진입시점 스냅샷을 뽑는다 """
+        from analyzer import bot_백테스팅_틱기반매수세 as BT
+        path = os.path.join(self.folder_거래, f'df_거래내역_{s_일자}.pkl')
+        if not os.path.exists(path):
+            return list()
+        df_거래 = pd.read_pickle(path)
+        if not len(df_거래):
+            return list()
+
+        df_틱 = wf._load_틱(s_일자)
+        if df_틱 is None:
+            return list()
+        li_코드 = set(df_거래['종목코드'])
+        dic_arr = {code: wf._indic_종목(g) for code, g in df_틱.groupby('종목코드', sort=False)
+                   if code in li_코드}
+
+        def n_초(s_hms):
+            h, m, s = str(s_hms).split(':')
+            return int(h) * 3600 + int(m) * 60 + int(s)
+
+        li_out = list()
+        for _, r in df_거래.iterrows():
+            arr = dic_arr.get(r['종목코드'])
+            if arr is None:
+                continue
+            n_창 = BT._구간1_창
+            d = pd.DataFrame(dict(초=arr['ary_초'], price=arr['price']))
+            d['체결률10'] = pd.Series(arr['매수틱수']).rolling(n_창).sum().values / n_창
+            sri_매, sri_도 = pd.Series(arr['매수량']), pd.Series(arr['매도량'])
+            d['순매수10'] = ((sri_매 - sri_도).rolling(n_창).sum()
+                          / (sri_매 + sri_도).rolling(n_창).sum().replace(0, np.nan)).values
+            for s_k in ['체결강도롤링', '체결강도누적', '체결횟수강도롤링', '매수횟수5', '이격률']:
+                d[s_k] = arr[s_k]
+            a_도 = np.nan_to_num(arr['단위매도량'], nan=0.0)
+            d['단위비'] = np.divide(np.nan_to_num(arr['단위매수량'], nan=0.0), a_도,
+                                 out=np.zeros_like(a_도), where=a_도 > 0)
+
+            n_진입, n_청산 = n_초(r['매수시점']), n_초(r['매도시점'])
+            dd = d[(d['초'] >= 9 * 3600) & (d['초'] <= n_청산 + 150)].reset_index(drop=True)
+            if len(dd) < 10:
+                continue
+
+            # 스탑 궤적 - 진입 이후만 (max(손절가, 고점×(1-트레일)))
+            n_매수가 = float(r['매수가'])
+            b_g1 = r['구간'] == '구간1'
+            n_손절가 = n_매수가 * (1 - (BT._구간1_손절 if b_g1 else BT._T_손절) / 100)
+            n_트레일 = BT._구간1_트레일 if b_g1 else BT._T_트레일
+            a_stop = np.full(len(dd), np.nan)
+            b_후 = (dd['초'] > n_진입).values
+            if b_후.any():
+                a_피크 = np.maximum.accumulate(
+                    np.concatenate(([n_매수가], dd['price'].values[b_후])))[1:]
+                a_stop[b_후] = np.maximum(n_손절가, a_피크 * (1 - n_트레일 / 100))
+
+            n_보폭 = max(1, len(dd) // 620)          # 점이 너무 많으면 파일만 커진다
+            idx = np.arange(0, len(dd), n_보폭)
+            dic_계열 = dict(초=dd['초'].values[idx].astype(int),
+                          price=dd['price'].values[idx], stop=a_stop[idx])
+            for s_k in self.LI_지표:
+                dic_계열[s_k] = dd[s_k].values[idx]
+
+            i0 = int(np.searchsorted(d['초'].values, n_진입))
+            li_out.append(dict(코드=r['종목코드'], 종목명=r['종목명'], 구간=r['구간'],
+                               진입=n_진입, 청산=n_청산, 매수시점=str(r['매수시점']),
+                               매도시점=str(r['매도시점']), 수익률=float(r['수익률']),
+                               mfe=float(r['mfe_수익률']), mae=float(r['mae_수익률']),
+                               계열=dic_계열,
+                               스냅={s_k: float(d[s_k].values[i0]) for s_k in self.LI_지표}))
+        return li_out
+
+    @staticmethod
+    def _t_범위(a, li_문턱=()):
+        a = np.asarray(a, dtype=float)
+        a = a[np.isfinite(a)]
+        if not len(a):
+            return 0.0, 1.0
+        n_lo, n_hi = float(a.min()), float(a.max())
+        for n_v in li_문턱:
+            n_lo, n_hi = min(n_lo, n_v * 0.9), max(n_hi, n_v * 1.1)
+        if n_hi - n_lo < 1e-9:
+            n_hi = n_lo + 1.0
+        n_p = (n_hi - n_lo) * 0.1
+        return n_lo - n_p, n_hi + n_p
+
+    def _s_선(self, a_x, a_y, t_범위, n_상단, n_높이, s_색, n_굵기, s_대시=''):
+        """ 결측 구간에서 선을 끊어 그린다 (지표는 웜업 전이 비어 있다) """
+        n_lo, n_hi = t_범위
+        n_x0, n_x1 = self.N_여백L, self.N_폭 - self.N_여백R
+        li = list()
+        for n_x, n_y in zip(a_x, a_y):
+            if not np.isfinite(n_y):
+                if li and li[-1] != '|':
+                    li.append('|')
+                continue
+            n_px = n_x0 + (n_x1 - n_x0) * (n_x - a_x[0]) / max(1, a_x[-1] - a_x[0])
+            n_py = n_상단 + n_높이 * (1 - (n_y - n_lo) / (n_hi - n_lo))
+            li.append(f'{n_px:.1f},{n_py:.1f}')
+        return ''.join(f'<polyline points="{seg.strip()}" fill="none" stroke="{s_색}" '
+                       f'stroke-width="{n_굵기}" stroke-linejoin="round"{s_대시}/>'
+                       for seg in ' '.join(li).split('|') if seg.count(',') >= 2)
+
+    def s_차트(self, dic_x, dic_문턱):
+        """ 한 거래의 4단 그래프 (가격 / 진입성분 / 강도계열 / 체결 크기·빈도) """
+        c = dic_x['계열']
+        a_x = np.asarray(c['초'], dtype=float)
+        n_x0, n_x1 = self.N_여백L, self.N_폭 - self.N_여백R
+        n_높이전체 = 22 + sum(h + 34 for _, h, _, _, _ in self.LI_패널) + 12
+        n_상단, li_svg, li_범례 = 22, list(), list()
+
+        for s_제목, n_h, li_좌, li_우, li_문턱 in self.LI_패널:
+            li_문턱 = [(k, dic_문턱.get(k) if v is None else v) for k, v in li_문턱]
+            li_문턱 = [(k, v) for k, v in li_문턱 if v is not None]
+            li_svg.append(f'<text x="{n_x0}" y="{n_상단 - 6}" fill="#8b949e" font-size="11.5">'
+                          f'{s_제목}</text>'
+                          f'<rect x="{n_x0}" y="{n_상단}" width="{n_x1 - n_x0}" height="{n_h}" '
+                          f'fill="#0d1117" stroke="#21262d"/>')
+            for b_우, li_계, s_앵커, n_라벨x in [(False, li_좌, 'end', n_x0 - 6),
+                                            (True, li_우 or [], 'start', n_x1 + 6)]:
+                if not li_계:
+                    continue
+                li_해당문턱 = [v for k, v in li_문턱 if any(k == kk for kk, *_ in li_계)]
+                t_범위 = self._t_범위(
+                    np.concatenate([np.asarray(c[k], dtype=float) for k, *_ in li_계]),
+                    li_해당문턱)
+                for n_v in ([t_범위[0], t_범위[1]] if b_우
+                            else [t_범위[0], sum(t_범위) / 2, t_범위[1]]):
+                    n_py = n_상단 + n_h * (1 - (n_v - t_범위[0]) / (t_범위[1] - t_범위[0]))
+                    li_svg.append(f'<text x="{n_라벨x}" y="{n_py + 3.5:.1f}" '
+                                  f'text-anchor="{s_앵커}" fill="#6e7681" font-size="10">'
+                                  f'{n_v:,.2f}</text>' if b_우 else
+                                  f'<text x="{n_라벨x}" y="{n_py + 3.5:.1f}" '
+                                  f'text-anchor="{s_앵커}" fill="#6e7681" font-size="10">'
+                                  f'{n_v:,.0f}</text>')
+                for s_k, s_색, n_w, s_라벨 in li_계:
+                    li_svg.append(self._s_선(a_x, np.asarray(c[s_k], dtype=float), t_범위,
+                                             n_상단, n_h, s_색, n_w,
+                                             ' stroke-dasharray="4 3"' if s_k == 'stop' else ''))
+                    li_범례.append((s_색, s_라벨 + (' (우축)' if b_우 else '')))
+                for n_v in li_해당문턱:
+                    if t_범위[0] <= n_v <= t_범위[1]:
+                        n_py = n_상단 + n_h * (1 - (n_v - t_범위[0]) / (t_범위[1] - t_범위[0]))
+                        li_svg.append(f'<line x1="{n_x0}" y1="{n_py:.1f}" x2="{n_x1}" '
+                                      f'y2="{n_py:.1f}" stroke="#3fb950" stroke-width="1" '
+                                      f'stroke-dasharray="5 4" opacity="'
+                                      f'{".6" if b_우 else "1"}"/>')
+            for n_t, s_색 in [(dic_x['진입'], '#3fb950'), (dic_x['청산'], '#8b949e')]:
+                n_px = n_x0 + (n_x1 - n_x0) * (n_t - a_x[0]) / max(1, a_x[-1] - a_x[0])
+                li_svg.append(f'<line x1="{n_px:.1f}" y1="{n_상단}" x2="{n_px:.1f}" '
+                              f'y2="{n_상단 + n_h}" stroke="{s_색}" stroke-width="1.3" '
+                              f'opacity=".85"/>')
+            n_상단 += n_h + 34
+
+        for n_i in range(7):
+            n_t = a_x[0] + (a_x[-1] - a_x[0]) * n_i / 6
+            n_px = n_x0 + (n_x1 - n_x0) * n_i / 6
+            li_svg.append(f'<text x="{n_px:.1f}" y="{n_높이전체 - 4}" text-anchor="middle" '
+                          f'fill="#8b949e" font-size="10.5">'
+                          f'{int(n_t) // 3600:02d}:{int(n_t) % 3600 // 60:02d}:'
+                          f'{int(n_t) % 60:02d}</text>')
+
+        li_범례2, set_본 = list(), set()
+        for s_색, s_라벨 in li_범례:
+            if s_라벨 not in set_본:
+                set_본.add(s_라벨)
+                li_범례2.append((s_색, s_라벨))
+        return (f'<div class="chart">'
+                f'<div class="chd"><b>{dic_x["종목명"]}</b> '
+                f'<span class="mu">{dic_x["코드"]} · {dic_x["구간"]}</span> '
+                f'<span class="mu">진입 {dic_x["매수시점"]} → 청산 {dic_x["매도시점"]} '
+                f'({dic_x["청산"] - dic_x["진입"]}초)</span> '
+                f'<span>{s_pct(dic_x["수익률"])}</span> '
+                f'<span class="mu">최대이익 {dic_x["mfe"]:+.2f}% · '
+                f'최대손실 {dic_x["mae"]:+.2f}%</span></div>'
+                f'<svg viewBox="0 0 {self.N_폭} {n_높이전체}" role="img" '
+                f'aria-label="{dic_x["종목명"]} 지표 변화">{"".join(li_svg)}</svg>'
+                f'<div class="lg">'
+                + ''.join(f'<span><span class="tag" style="background:{s_색}"></span>{s_라벨}'
+                          f'</span>' for s_색, s_라벨 in li_범례2)
+                + '<span><span class="tag" style="background:#3fb950"></span>현행 문턱</span>'
+                  '<span><span class="tag" style="background:#8b949e"></span>청산</span>'
+                  '</div></div>')
+
+    def li_지표변화(self, wf, s_일자):
+        from analyzer import bot_백테스팅_틱기반매수세 as BT
+        B = [f'<h2>당일 지표 변화 — {s_일자}</h2>']
+        try:
+            li_x = self.li_계열(wf, s_일자)
+        except Exception as e:                                  # noqa: BLE001
+            self.make_로그(f'지표변화 생략 - {type(e).__name__}: {e}')
+            return B + ['<p class="mu">지표 계열을 만들지 못했다.</p>']
+        if not li_x:
+            return B + ['<p class="mu">그날 거래가 없다 — 신호 없는 날은 그릴 것도 없다.</p>']
+
+        dic_문턱 = {'체결률10': float(BT._구간1_체결률), '순매수10': float(BT._구간1_순매수)}
+        B.append('<p class="mu">그날 실제로 잡은 거래마다 <b>1초봉 가격과 지표들이 진입 전후로 '
+                 '어떻게 움직였는지</b>를 펼쳐 놓은 것이다. 성적을 재는 표가 아니라 '
+                 '<b>"무엇을 더 봤어야 했나"를 찾는 자리</b>다. 초록 세로선이 진입, '
+                 '회색 세로선이 청산이고, 초록 점선은 지금 쓰는 문턱이다.</p>')
+
+        B.append('<h3>진입 순간 스냅샷</h3>')
+        B.append('<div class="tw"><table><thead><tr><th class="l">종목</th><th>진입</th>'
+                 '<th>보유</th><th>수익률</th><th>최대이익</th><th>최대손실</th>'
+                 + ''.join(f'<th>{self.DIC_라벨[k]}</th>' for k in self.LI_표지표)
+                 + '</tr></thead><tbody>')
+        for x in sorted(li_x, key=lambda v: -v['수익률']):
+            B.append(f'<tr><td class="l">{x["종목명"]}</td><td>{x["매수시점"]}</td>'
+                     f'<td>{x["청산"] - x["진입"]}초</td><td>{s_pct(x["수익률"])}</td>'
+                     f'<td>{s_pct(x["mfe"])}</td><td>{s_pct(x["mae"])}</td>'
+                     + ''.join((f'<td>{x["스냅"][k]:,.2f}</td>'
+                                if x['스냅'][k] == x['스냅'][k] else '<td class="mu">-</td>')
+                               for k in self.LI_표지표) + '</tr>')
+        B.append('</tbody></table></div>')
+
+        li_승 = [x for x in li_x if x['수익률'] > 0]
+        li_패 = [x for x in li_x if x['수익률'] <= 0]
+        if li_승 and li_패:
+            n_승강도 = float(np.mean([x['스냅']['체결강도롤링'] for x in li_승]))
+            n_패강도 = float(np.mean([x['스냅']['체결강도롤링'] for x in li_패]))
+            n_승비 = float(np.mean([x['스냅']['단위비'] for x in li_승]))
+            n_패비 = float(np.mean([x['스냅']['단위비'] for x in li_패]))
+            B.append(f'<p class="note">이날 승자 {len(li_승)}건과 패자 {len(li_패)}건의 진입 순간 '
+                     f'평균은 체결강도 <b>{n_승강도:,.0f} vs {n_패강도:,.0f}</b>, '
+                     f'단위매수÷매도 <b>{n_승비:,.2f} vs {n_패비:,.2f}</b>였다. '
+                     f'표본이 한 자릿수이므로 <b>발견이 아니라 눈에 걸린 것</b>일 뿐이다 — '
+                     f'하루치로 축을 넣거나 빼지 않는다.</p>')
+
+        for x in li_x:
+            B.append(self.s_차트(x, dic_문턱))
+
+        B.append('<h3>이 그림에서 꺼내볼 만한 축</h3><ul>'
+                 '<li><b>상한 문턱</b> — 지금 격자의 체결강도·체결횟수강도·단위비는 전부 '
+                 '<b>하한</b>(이상이면 진입)이다. 같은 지표를 <b>상한</b>으로 걸어 과열 진입을 '
+                 '빼는 축은 아직 없다.</li>'
+                 '<li><b>문턱을 넘는 속도·지속시간</b> — 지금은 넘었는지만 본다. 얼마나 빨리 '
+                 '넘었는지, 몇 초째 넘어 있었는지는 축에 없다.</li>'
+                 '<li><b>고가 대비 위치</b> — 구간2에는 이격률 상·하한이 있지만 구간1에는 없다.</li>'
+                 '<li><b>손실의 종류</b> — 진입 직후 곧장 역행한 손실과, 한참 올랐다가 트레일에 '
+                 '되돌려준 손실은 고칠 곳이 정반대인데 지금은 한 덩어리로 센다.</li>'
+                 '<li><b>신호 동시성</b> — 같은 순간에 여러 종목이 함께 신호를 낼 때와 홀로 뜰 때를 '
+                 '나누는 축이 없다.</li></ul>'
+                 '<p class="note">전부 <b>그날 하루를 보고 떠올린 것</b>이라 그대로 넣으면 안 된다. '
+                 '축 하나를 격자에 넣으려면 후보로 <b>사전 등록</b>한 뒤 전 구간에서 훑고 대조군을 '
+                 '붙여야 한다.</p>')
+        return B
+
+    # =================================================================
+    # 리포트
+    # =================================================================
     def make_리포트(self):
-        df = self.df_거래()
-        if not len(df):
-            return None, '거래내역 없음'
-        df_결 = self.df_결과()
-        df_실 = self.df_실매매()
-        dic_종 = self.dic_종목별()          # 도넛과 아래 구획이 함께 쓴다 (무거우므로 한 번만)
-
-        s_기준일 = str(df['일자'].max())
-        d_개발 = df[df['일자'] <= S_개발표본_종료]
-        d_홀드 = df[df['일자'] > S_개발표본_종료]
-        d_오늘 = df[df['일자'] == s_기준일]
-        dic_개발, dic_홀드, dic_전체 = (self.dic_집계(d_개발), self.dic_집계(d_홀드), self.dic_집계(df))
-        dic_오늘 = self.dic_집계(d_오늘)
-
-        # 잔고는 '기준일까지'로 잘라서 본다 - 40_결과정리가 30_거래내역보다 앞서 있어도 날짜가 섞이지 않게
-        sri_잔고전체 = pd.Series(dtype=float)
-        if len(df_결):
-            sri_잔고전체 = pd.Series(
-                pd.to_numeric(df_결['거래후예수금'], errors='coerce').values,
-                index=df_결['일자'].astype(str).values)
-            sri_잔고전체 = sri_잔고전체[sri_잔고전체.index <= s_기준일]
-        n_잔고 = float(sri_잔고전체.iloc[-1]) if len(sri_잔고전체) else np.nan
-        n_계좌율 = (n_잔고 / N_계좌_시작 - 1) * 100 if n_잔고 == n_잔고 else np.nan
-
-        # 홀드아웃만 떼어낸 계좌 - 홀드아웃 시작 시점에 N_계좌_시작 으로 다시 출발했다면
-        # 사이징이 총자본 비례(총자본÷분할수)라 수익률은 자본 규모와 무관하다 → 잔고 비율을 그대로 환산해도 된다
-        n_잔고홀드, n_홀드계좌율 = np.nan, np.nan
-        if len(sri_잔고전체):
-            sri_기준 = sri_잔고전체[sri_잔고전체.index <= S_개발표본_종료]
-            n_기준잔고 = float(sri_기준.iloc[-1]) if len(sri_기준) else float(N_계좌_시작)
-            if n_기준잔고 > 0 and n_잔고 == n_잔고:
-                n_잔고홀드 = N_계좌_시작 * n_잔고 / n_기준잔고
-                n_홀드계좌율 = (n_잔고홀드 / N_계좌_시작 - 1) * 100
-
-        # 최근 거래속도 (최근 6영업일) - 남은 기간 환산의 기준
-        sri_일건수 = df.groupby('일자').size()
-        n_속도 = float(sri_일건수.tail(6).mean())
-        n_남은1 = max(0, N_목표_건수1 - dic_홀드['건수'])
-        n_남은일1 = int(np.ceil(n_남은1 / n_속도)) if n_속도 > 0 else np.nan
-        n_남은2 = max(0, N_목표_건수2 - dic_홀드['건수'])
-        n_남은일2 = int(np.ceil(n_남은2 / n_속도)) if n_속도 > 0 else np.nan
-
-        def s_예상일(n_영업일):
-            if n_영업일 != n_영업일 or n_영업일 <= 0:
-                return '도달'
-            dt = pd.bdate_range(pd.Timestamp(s_기준일) + pd.Timedelta(days=1), periods=int(n_영업일))
-            return dt[-1].strftime('%Y-%m-%d') + ' 무렵'
+        from analyzer.종목별롤링워크포워드 import 종목별롤링워크포워드
+        wf = 종목별롤링워크포워드()
+        li_일자, dic_일별, _ = wf.평가_세방식()
+        if not li_일자:
+            return None, '손익행렬 비었음'
+        li_최근 = li_일자[-N_최근창:]
+        s_기준일 = li_일자[-1]
 
         B = list()
+        B.append(f"""<div class="lead">
+네 세트를 <b>같은 격자({len(wf.li_조)}칸)·같은 시뮬·같은 검증일</b> 위에서 나란히 돌린 결과다.
+청산·구간2·자금관리·비용은 전부 현행과 동일하고 바뀌는 축은 구간1 진입·트레일뿐이다.
+학습창을 아직 못 채운 초기 구간은 <b>현행 파라미터로 매매한 것으로 본다</b>
+(2번은 앞 10거래일, 3번은 종목의 출현 이력이 없는 종목·일).
+</div>""")
+        B += self.li_요약(dic_일별, li_일자, li_최근)
+        B += self.li_일별(dic_일별, li_일자, li_최근)
+        B += self.li_지표변화(wf, s_기준일)
 
-        # ── 한눈에
-        s_판정 = ('<span class="ok">판정 가능 구간 진입</span>' if dic_홀드['건수'] >= N_목표_건수1
-                else f'<span class="wn">표본 축적 중</span>')
-        B.append(f"""
-<div class="lead">
-<b>현재 상태 — {s_판정}.</b>
-홀드아웃 {dic_홀드['일수']}일 · {dic_홀드['건수']}건 · 거래손익 합 {dic_홀드['합계']:+.2f}%(거래당 {dic_홀드['거래당']:+.3f}%) ·
-<b>계좌로는 {n_홀드계좌율:+.2f}%</b>({N_계좌_시작 / 10000:,.0f}만 → {n_잔고홀드:,.0f}원).
-1차 판정선({N_목표_건수1}건)까지 <b>{n_남은1}건</b> 남았고 최근 속도({n_속도:.1f}건/일)로 약
-<b>{n_남은일1}거래일</b>({s_예상일(n_남은일1)})이 필요하다.
-<b>그 전까지의 숫자는 참고용이며 배포·중단 판단의 근거로 쓰지 않는다.</b>
-</div>
-""")
-        # 당일 지표
-        n_승 = round(dic_오늘['건수'] * dic_오늘['승률'] / 100) if dic_오늘['건수'] else 0
-        n_오늘1 = float(d_오늘[d_오늘['구간'] == '구간1']['수익률'].sum())
-        n_오늘2 = float(d_오늘[d_오늘['구간'] == '구간2']['수익률'].sum())
-        n_오늘건1 = int((d_오늘['구간'] == '구간1').sum())
-        n_오늘건2 = int((d_오늘['구간'] == '구간2').sum())
-
-        def s_구간요약(s_구간):
-            """ '구간1 2건 1승1패' - 거래 없으면 건수만 """
-            x = d_오늘[d_오늘['구간'] == s_구간]['수익률']
-            if not len(x):
-                return f'{s_구간} 0건'
-            n_w = int((x > 0).sum())
-            return f'{s_구간} {len(x)}건 {n_w}승{len(x) - n_w}패'
-        n_전일잔고 = float(sri_잔고전체.iloc[-2]) if len(sri_잔고전체) >= 2 else np.nan
-        n_당일계좌율 = ((n_잔고 / n_전일잔고 - 1) * 100
-                   if (n_전일잔고 == n_전일잔고 and n_전일잔고 > 0 and n_잔고 == n_잔고) else np.nan)
-        n_당일손익액 = n_잔고 - n_전일잔고 if n_전일잔고 == n_전일잔고 else np.nan
-
-        B.append(f"""
-<div class="rowlbl">누적 — 시작부터 {s_기준일}까지</div>
-<div class="grid4">
-<div class="card"><div class="k">백테 계좌 (개발표본 포함)</div>
-<div class="v">{s_pct(n_계좌율)}</div>
-<div class="n">{N_계좌_시작 / 10000:,.0f}만 → {n_잔고:,.0f}원 · {dic_전체['일수']}일 {dic_전체['건수']}건</div></div>
-<div class="card"><div class="k">홀드아웃 계좌 ({N_계좌_시작 / 10000:,.0f}만 재출발 가정)</div>
-<div class="v">{s_pct(n_홀드계좌율)}</div>
-<div class="n">{N_계좌_시작 / 10000:,.0f}만 → {n_잔고홀드:,.0f}원 · {dic_홀드['일수']}일 {dic_홀드['건수']}건</div></div>
-<div class="card"><div class="k">홀드아웃 거래손익 합</div><div class="v">{s_pct(dic_홀드['합계'])}</div>
-<div class="n">거래당 {dic_홀드['거래당']:+.3f}% · 계좌 영향은 분할수만큼 희석</div></div>
-<div class="card"><div class="k">1차 판정선까지</div><div class="v">{n_남은1}건</div>
-<div class="n">최근 {n_속도:.1f}건/일 → 약 {n_남은일1}거래일 · {s_예상일(n_남은일1)}</div></div>
-</div>
-
-<div class="rowlbl">당일 — {s_기준일}</div>
-<div class="grid4">
-<div class="card"><div class="k">당일 계좌</div>
-<div class="v">{s_pct(n_당일계좌율)}</div>
-<div class="n">{f"{n_당일손익액:+,.0f}원 · 잔고 {n_잔고:,.0f}원" if n_당일손익액 == n_당일손익액 else "전일 잔고 없음"}</div></div>
-<div class="card"><div class="k">당일 거래손익 합</div>
-<div class="v">{s_pct(dic_오늘['합계']) if dic_오늘['건수'] else '<span class="mu">거래 없음</span>'}</div>
-<div class="n">{f"거래당 {dic_오늘['거래당']:+.3f}%" if dic_오늘['건수'] else '신호 없음 — 나쁜 날 회피도 성과다'}</div></div>
-<div class="card"><div class="k">당일 구간별 손익</div>
-<div class="v" style="font-size:19px">{s_pct(n_오늘1) if n_오늘건1 else '<span class="mu">-</span>'}
- / {s_pct(n_오늘2) if n_오늘건2 else '<span class="mu">-</span>'}</div>
-<div class="n">구간1 / 구간2</div></div>
-<div class="card"><div class="k">당일 거래</div>
-<div class="v">{dic_오늘['건수']}건</div>
-<div class="n">{f"승 {n_승} · 패 {dic_오늘['건수'] - n_승} (승률 {dic_오늘['승률']:.0f}%)<br>" if dic_오늘['건수'] else ''
-                }{s_구간요약('구간1')} · {s_구간요약('구간2')}</div></div>
-</div>
-""")
-
-        # ── 진척
-        B.append('<h2>목표 대비 어디까지 왔나</h2>')
-        B.append('<div class="grid4">')
-        n_남은롤링일 = max(0, N_목표_롤링일 - dic_전체['일수'])
-        n_종목일 = dic_종['튜닝'] if dic_종 else 0
-        n_종목속도 = (float(np.mean([x['튜닝'] for x in dic_종['폴드'][-6:]]))
-                  if dic_종 and dic_종['폴드'] else 0.0)
-        n_남은종목일 = max(0, N_목표_종목일 - n_종목일)
-        n_남은일3 = int(np.ceil(n_남은종목일 / n_종목속도)) if n_종목속도 > 0 else np.nan
-        B.append(s_도넛('1차 판정선', dic_홀드['건수'], N_목표_건수1, '건',
-                       f'거래당 +0.90% 가정<br>약 {n_남은일1}거래일 · {s_예상일(n_남은일1)}'))
-        B.append(s_도넛('2차 판정선', dic_홀드['건수'], N_목표_건수2, '건',
-                       f'거래당 +0.64% 가정<br>약 {n_남은일2}거래일 · {s_예상일(n_남은일2)}'))
-        B.append(s_도넛('롤링 재검증', dic_전체['일수'], N_목표_롤링일, '거래일',
-                       f'{N_목표_롤링창}일창 + {N_목표_롤링폴드}폴드 · '
-                       f'현재 폴드 {max(0, dic_전체["일수"] - N_목표_롤링창)}개<br>'
-                       f'{s_예상일(n_남은롤링일)}'))
-        B.append(s_도넛('종목별 재검증', n_종목일, N_목표_종목일, '종목·일',
-                       f'짝지은 차이 t = 1.96 도달선<br>'
-                       f'최근 {n_종목속도:.1f}건/일 → 약 {n_남은일3}거래일 · {s_예상일(n_남은일3)}'))
-        B.append('</div>')
-        B.append(f"""
-<p class="note">판정선 근거 — 관측 분포(거래당 평균 +0.64%, 표준편차 3.13%, 왜도 1.46)를 부트스트랩해
-양측 95%·검정력 80%로 "거래당 기대값이 0보다 크다"를 말하는 데 필요한 거래 수를 구한 값이다.
-참 기대값을 개발표본 수준(+0.90%)으로 가정하면 {N_목표_건수1}건, 전체 평균(+0.64%)이면 {N_목표_건수2}건이다.
-<b>거래 빈도는 국면에 따라 3배 넘게 변하므로 날짜가 아니라 건수로 판단한다.</b><br>
-예상 도달일은 평일만 세어 환산한 값이라 공휴일만큼 뒤로 밀린다. 거래 빈도가 바뀌면 매일 다시 계산된다.</p>
-""")
-
-        # ── 성능
-        B.append('<h2>성능</h2>')
-        B.append('<div class="tw"><table><thead><tr><th class="l">구분</th><th>일수</th><th>거래</th>'
-                 '<th>합계</th><th>거래당</th><th>승률</th><th>최대</th><th>최소</th><th>손실일</th>'
-                 '</tr></thead><tbody>')
-        for s_이름, dic_x in [('개발표본 (~' + S_개발표본_종료 + ')', dic_개발),
-                            ('홀드아웃 (' + S_개발표본_종료 + ' 이후)', dic_홀드),
-                            ('전체', dic_전체)]:
-            B.append(f'<tr><td class="l">{s_이름}</td><td>{dic_x["일수"]}</td><td>{dic_x["건수"]}</td>'
-                     f'<td>{s_pct(dic_x["합계"])}</td><td>{s_pct(dic_x["거래당"], 3)}</td>'
-                     f'<td>{dic_x["승률"]:.0f}%</td><td>{s_pct(dic_x["최대"])}</td>'
-                     f'<td>{s_pct(dic_x["최소"])}</td>'
-                     f'<td>{dic_x["손실일"]}/{dic_x["일수"]}</td></tr>')
-        B.append('</tbody></table></div>')
-        B.append(f"""
-<p class="note"><b>"합계"는 거래 수익률을 단순히 더한 값이고 계좌 수익률과 다르다.</b>
-진입 한 건에 총자본의 1/분할수만 넣으므로 거래손익은 그만큼 희석되고, 대신 잔고에 복리로 쌓인다.
-홀드아웃이 거래손익 합 {dic_홀드['합계']:+.2f}%인데 계좌로는 {n_홀드계좌율:+.2f}%인 이유다.
-계좌 환산은 사이징이 총자본 비례라 자본 규모와 무관하므로,
-홀드아웃 시작 시점에 {N_계좌_시작 / 10000:,.0f}만원으로 다시 출발했다고 보면
-지금 <b>{n_잔고홀드:,.0f}원</b>이다.</p>
-""")
-
-        B.append('<h3>구간별 (홀드아웃 기준)</h3>')
-        B.append('<div class="tw"><table><thead><tr><th class="l">구간</th><th>거래</th><th>합계</th>'
-                 '<th>거래당</th><th>승률</th></tr></thead><tbody>')
-        for s_구간 in ['구간1', '구간2']:
-            x = self.dic_집계(d_홀드[d_홀드['구간'] == s_구간])
-            B.append(f'<tr><td class="l">{s_구간}</td><td>{x["건수"]}</td><td>{s_pct(x["합계"])}</td>'
-                     f'<td>{s_pct(x["거래당"], 3)}</td>'
-                     f'<td>{f"{x['승률']:.0f}%" if x["건수"] else "-"}</td></tr>')
-        B.append('</tbody></table></div>')
-
-        B.append('<h3>최근 10거래일</h3>')
-        B.append('<div class="tw"><table><thead><tr><th>일자</th><th>거래</th><th>손익</th>'
-                 '<th>구간1</th><th>구간2</th><th>계좌잔고</th></tr></thead><tbody>')
-        dic_잔고 = (dict(zip(df_결['일자'].astype(str),
-                          pd.to_numeric(df_결['거래후예수금'], errors='coerce')))
-                  if len(df_결) else dict())
-        for s_d in sorted(df['일자'].unique())[-10:]:
-            x = df[df['일자'] == s_d]
-            n1 = x[x['구간'] == '구간1']['수익률'].sum()
-            n2 = x[x['구간'] == '구간2']['수익률'].sum()
-            n_bal = dic_잔고.get(str(s_d), np.nan)
-            B.append(f'<tr><td>{s_d}</td><td>{len(x)}</td><td>{s_pct(x["수익률"].sum())}</td>'
-                     f'<td>{s_pct(n1)}</td><td>{s_pct(n2)}</td>'
-                     f'<td>{f"{n_bal:,.0f}원" if n_bal == n_bal else "-"}</td></tr>')
-        B.append('</tbody></table></div>')
-
-        # ── 안정성
-        n_t = self.n_t값(d_홀드)
-        n_loo홀드 = self.n_loo(d_홀드)
-        n_mdd = self.n_낙폭(df_결)
-        n_fat = self.n_팻테일(df)
-        B.append('<h2>안정성</h2>')
-        B.append('<div class="tw"><table><thead><tr><th class="l">지표</th><th>값</th>'
-                 '<th class="l">읽는 법</th></tr></thead><tbody>')
-        li_행 = [
-            ('손실일 비율 (홀드아웃)',
-             f'{dic_홀드["손실일"]}/{dic_홀드["일수"]}일'
-             + (f' ({dic_홀드["손실일"] / dic_홀드["일수"] * 100:.0f}%)' if dic_홀드['일수'] else ''),
-             '일별 결산 손실 없이 유지가 대전제 — 이 비율이 절반을 넘으면 경고'),
-            ('최대 낙폭 (백테 계좌)', s_pct(n_mdd),
-             '고점 대비 최대 하락. 실계좌가 견딜 수 있는 폭인지로 본다'),
-            ('하루빼기 최악 (홀드아웃)', s_pct(n_loo홀드),
-             '가장 좋은 하루를 빼도 남는 합계. 한 날에 기대고 있으면 크게 떨어진다'),
-            ('팻테일 의존도 (전체)',
-             f'{n_fat:.0f}%' if n_fat == n_fat else '-',
-             '상위 3건이 총이익에서 차지하는 비중. 높을수록 소수 대박 의존'),
-            ('통계 유의성 t값 (홀드아웃)',
-             f'{n_t:+.2f}' if n_t == n_t else '-',
-             '|t| ≥ 2 라야 "0이 아니다"라고 말할 수 있다. 지금은 표본 부족'),
-        ]
-        if len(df_실):
-            d_실홀드 = df_실[df_실['일자'] > S_개발표본_종료]
-            if len(d_실홀드):
-                n_실합 = float(d_실홀드['순손익'].sum())
-                n_실률 = n_실합 / float(d_실홀드['매수금'].sum()) * 100
-                li_행.append(('실매매 실현 (홀드아웃)',
-                             f'{n_실합:+,.0f}원 ({n_실률:+.2f}%)',
-                             '원장 기준 비용 후 실현손익. 백테와 부호가 갈리면 원인 조사'))
-        for s_k, s_v, s_설명 in li_행:
-            B.append(f'<tr><td class="l">{s_k}</td><td>{s_v}</td><td class="l">'
-                     f'<span class="mu">{s_설명}</span></td></tr>')
-        B.append('</tbody></table></div>')
-
-        # ── 최적화 비교 두 구획 (실패해도 대시보드 자체는 나가야 한다)
-        B += self.li_롤링비교()
-        B += self.li_종목별비교(dic_종)
-
-        # ── 앞으로
-        B.append('<h2>앞으로</h2>')
-        B.append(f"""
-<ul>
-<li><b>1차 판정선 {N_목표_건수1}건까지 {n_남은1}건.</b> 최근 속도 {n_속도:.1f}건/일 기준
-약 {n_남은일1}거래일 — {s_예상일(n_남은일1)}. 이때 로직의 기대값이 개발표본 수준(+0.90%)이라면
-비로소 "0보다 크다"를 80% 확률로 잡아낼 수 있다.</li>
-<li><b>기대값이 그보다 낮으면(+0.64%) {N_목표_건수2}건이 필요하다</b> — {n_남은2}건, 약 {n_남은일2}거래일
-({s_예상일(n_남은일2)}). 즉 <b>로직이 좋을수록 빨리 증명되고, 애매하면 오래 걸린다.</b></li>
-<li><b>롤링 walk-forward 재검증은 총 {N_목표_롤링일}거래일</b>({N_목표_롤링창}일 창 + {N_목표_롤링폴드}폴드)에서
-1차로 가능하다. 현재 {dic_전체['일수']}거래일 = 폴드 {max(0, dic_전체['일수'] - N_목표_롤링창)}개.
-다만 그때 잡히는 건 큰 효과(+1%p/일)뿐이고, 작은 효과(+0.5%p/일)는 107폴드가 필요해 훨씬 뒤다.</li>
-<li><b>종목별 재최적화(하이브리드)는 {N_목표_종목일} 종목·일에서 재판정한다.</b>
-현재 {n_종목일} 종목·일 — {n_남은종목일}건, 최근 속도 {n_종목속도:.1f}건/일 기준 약 {n_남은일3}거래일
-({s_예상일(n_남은일3)}). 그때 t가 2를 넘으면 소액 배포를 논하고, 넘지 못하면
-순열검정 p를 함께 보아 <b>종목 단위가 아니라 국면 단위로 갈아탈지</b>를 정한다.</li>
-<li><b>지금 할 일은 소액 유지와 표본 축적</b>이다. 판정선 전에 파라미터를 바꾸면
-누적 기록의 의미가 사라져 시계가 처음으로 되돌아간다.</li>
-</ul>
-""")
-
-        s_html = f"""<title>진척 대시보드 — {s_기준일}</title>
+        s_html = f"""<title>대시보드 — {s_기준일}</title>
 <style>{CSS}</style>
 <div class="wrap">
-<h1>진척 대시보드 — {s_기준일}</h1>
-<div class="sub">틱기반매수세 전략 · 개발표본 ~{S_개발표본_종료} / 홀드아웃 그 이후 ·
-백테 {dic_전체['일수']}거래일 {dic_전체['건수']}건 · 매일 백테스팅 직후 자동 생성</div>
+<h1>대시보드 — {s_기준일}</h1>
+<div class="sub">틱기반매수세 전략 · 1번 고정 / 2번 롤링 / 3번 종목별 / 오라클 ·
+틱 보유 전 구간 {li_일자[0]}~{li_일자[-1]} {len(li_일자)}거래일 · 격자 {len(wf.li_조)}칸 ·
+매일 백테스팅 직후 자동 생성</div>
 {''.join(B)}
-<div class="ft">bbTrader_claude · analyzer/대시보드.py 자동 생성 ·
-모든 수치는 30_거래내역·40_결과정리·주문체결 원장 실측</div>
+<div class="ft">bbTrader_claude · analyzer/대시보드.py 자동 생성 · 종목별 손익행렬
+(종목 × 일자 × {len(wf.li_조)}조합, 충실도 게이트 통과) 실측</div>
 </div>"""
 
         os.makedirs(self.folder_리포트, exist_ok=True)
         s_파일명 = f'{s_기준일}_대시보드.html'
-        path = os.path.join(self.folder_리포트, s_파일명)
-        with open(path, mode='wt', encoding='utf-8') as f:
+        with open(os.path.join(self.folder_리포트, s_파일명), mode='wt', encoding='utf-8') as f:
             f.write(s_html)
         self.make_로그(f'대시보드 생성 - {s_파일명} ({len(s_html.encode("utf-8")):,} bytes)')
 
-        # 텔레그램 본문 - 자세한 건 리포트에 있으니 여기서는 세 줄과 이정표 하나만
-        s_날짜 = f'{s_기준일[:4]}-{s_기준일[4:6]}-{s_기준일[6:]}'
-        # 수익률 세 줄은 모두 '계좌' 기준으로 맞춘다 (거래손익 합과 섞으면 헷갈린다)
-        s_오늘값 = f'{n_당일계좌율:+.2f}%' if n_당일계좌율 == n_당일계좌율 else '-'
-        s_이정표 = s_예상일(n_남은일1)
-        s_이정표 = ('도달' if s_이정표 == '도달'
-                 else f'{int(s_이정표[5:7])}/{int(s_이정표[8:10])} 무렵')
-        # 구분은 빈 줄로만 한다 - 괘선 문자(─ 등)는 폰트에 따라 폭이 1칸/2칸으로 갈려 줄맞춤이 깨진다
+        # 텔레그램 본문 - 자세한 건 리포트에 있으니 여기서는 네 세트 손익과 당일 성적만
         # 값은 전부 ASCII로 만들고 단위(원·건·일 등)는 라벨로 옮긴다 (윗쪽 s_행 주석 참조)
-        li_줄 = [
-            s_행('오늘 계좌', s_오늘값 if dic_오늘['건수'] else '-'),
-            s_행('홀드아웃 계좌', f'{n_홀드계좌율:+.2f}%'),
-            s_행('전체 계좌', f'{n_계좌율:+.2f}%'),
-            s_행('잔고', f'{n_잔고:,.0f}'),
-            '',
-            s_행('오늘 거래', f'{dic_오늘["건수"]}'),
-            s_행('오늘 승패', f'{n_승} / {dic_오늘["건수"] - n_승}' if dic_오늘['건수'] else '-'),
-            s_행('홀드아웃 일수', f'{dic_홀드["일수"]}'),
-            s_행('홀드아웃 건수', f'{dic_홀드["건수"]}'),
-            '',
-            s_행('판정선까지', f'{n_남은1}'),
-            s_행('예상 도달', s_이정표.replace(' 무렵', '')),
-        ]
-        # 박스는 <blockquote> - <pre> 는 텔레그램이 코드블록으로 보고 복사(</>) 버튼을 얹는다.
-        # 안쪽 <code> 는 고정폭 유지용 (줄맞춤이 ASCII 고정폭에 의존한다)
+        d_당일 = {m: dic_일별[m][s_기준일] for m in DIC_이름}
+        n_건 = d_당일['고정']['건수']
+        n_승 = d_당일['고정']['승']
+        li_줄 = list()
+        for m in DIC_이름:
+            n_전 = self.dic_기간(dic_일별, m, li_일자)['손익']
+            n_최 = self.dic_기간(dic_일별, m, li_최근)['손익']
+            li_줄.append(s_행(DIC_텔레라벨[m], f'{n_전:+7.1f}{n_최:+7.1f}'))
+        li_줄 += ['',
+                  s_행('오늘 거래', f'{n_건}'.rjust(N_텔레_값폭)),
+                  s_행('오늘 승패',
+                       (f'{n_승} / {n_건 - n_승}' if n_건 else '-').rjust(N_텔레_값폭)),
+                  s_행('오늘 １번', (f'{d_당일["고정"]["손익"]:+.2f}%'
+                                 if n_건 else '-').rjust(N_텔레_값폭)),
+                  s_행('오늘 ３번', (f'{d_당일["종목별"]["손익"]:+.2f}%'
+                                 if n_건 else '-').rjust(N_텔레_값폭))]
+        assert all(b_전각만(s_l.split(chr(32))[0][:N_라벨_전각]) for s_l in li_줄 if s_l)
+        s_날짜 = f'{s_기준일[:4]}-{s_기준일[4:6]}-{s_기준일[6:]}'
         s_요일 = '월화수목금토일'[pd.Timestamp(s_기준일).weekday()]
-        s_메세지 = (f'<b>═══  진척 대시보드  ═══</b>\n\n'
+        # 박스는 <blockquote> - <pre> 는 텔레그램이 코드블록으로 보고 복사 버튼을 얹는다
+        s_메세지 = (f'<b>═══  대시보드  ═══</b>\n\n'
                  f'{s_날짜} ({s_요일})\n'
+                 f'손익 합 — 전체 {len(li_일자)}일 / 최근 {len(li_최근)}일\n'
                  f'<blockquote><code>{chr(10).join(li_줄)}</code></blockquote>')
         return (s_파일명, s_메세지), None
 
@@ -746,8 +599,7 @@ def run(b_발송=True):
         d.make_로그(f'대시보드 실패 - {type(e).__name__}: {e}')
         try:
             from xapi.API_telegram import TelegramAPI
-            TelegramAPI().send_메세지(s_메세지=f'[진척 대시보드] 생성 실패\n'
-                                            f'{type(e).__name__}: {e}')
+            TelegramAPI().send_메세지(s_메세지=f'[대시보드] 생성 실패\n{type(e).__name__}: {e}')
         except Exception:
             pass
 

@@ -54,7 +54,10 @@ S_목적 = '총손익'       # 조합 선정 1순위 ('총손익' | '손실일�
                      #   종목 단위에서 역효과다 - 학습 표본이 3~4건이라 '손실일수 0'을 만드는
                      #   가장 쉬운 길이 덜 거래하는 조합이라서 목적함수가 그쪽으로 끌린다.
 S_행렬파일 = '_종목별손익행렬.pkl'
-N_셀 = 4               # (손익, 건수, 승수, 보유초)
+LI_방식 = ['고정', '롤링', '종목별', '오라클']    # 대시보드가 나란히 놓는 네 세트
+N_셀 = 8               # (손익, 건수, 승수, 보유초, 구간1손익, 구간1건수, 구간2손익, 구간2건수)
+                     #   구간1은 4분할·구간2는 3분할이라 배분비가 달라, 계좌 수익률로 환산하려면
+                     #   구간별로 나눠 놓아야 한다 (2026-08-25 추가).
 
 
 # noinspection NonAsciiCharacters,PyPep8Naming,SpellCheckingInspection
@@ -138,9 +141,10 @@ class 종목별롤링워크포워드(롤링워크포워드):
         return out
 
     def _run_거래(self, ary_초, ary_가격, n_길이, idx_g1, idx_후보, n_g1트레일):
-        """ 원본 거래 루프 (구간1+구간2 단일 포지션 북) — 집계값만 돌려준다 """
+        """ 원본 거래 루프 (구간1+구간2 단일 포지션 북) — 집계값만 돌려준다 (N_셀 칸) """
         P0 = self.dic_현행파라미터
         n_손익 = n_건수 = n_승 = n_보유 = 0.0
+        n_손익1 = n_건1 = n_손익2 = n_건2 = 0.0
         i, n_횟수1, n_횟수2 = 0, 0, 0
         while True:
             p1 = np.searchsorted(idx_g1, i)
@@ -189,10 +193,14 @@ class 종목별롤링워크포워드(롤링워크포워드):
             n_보유 += int(ary_초[i_청산]) - int(ary_초[i_진입])
             if b_g1:
                 n_횟수1 += 1
+                n_손익1 += n_수익률
+                n_건1 += 1
             else:
                 n_횟수2 += 1
+                n_손익2 += n_수익률
+                n_건2 += 1
             i = i_청산 + n_쿨다운
-        return n_손익, n_건수, n_승, n_보유
+        return n_손익, n_건수, n_승, n_보유, n_손익1, n_건1, n_손익2, n_건2
 
     # =================================================================
     # 손익행렬 (종목 × 일자 × 조합) — 새 일자만 증분
@@ -216,17 +224,29 @@ class 종목별롤링워크포워드(롤링워크포워드):
         return li
 
     def 행렬갱신(self, rebuild=False, li_일자=None):
-        """ {'셀': {일자: {종목: (조합수,4)}}, '선정': {일자: {종목: 종목명}}} 반환 """
-        dic = dict(셀=dict(), 선정=dict(), 탐색=DIC_탐색)
+        """ {'셀': {일자: {종목: (조합수, N_셀)}}, '선정': {일자: {종목: 종목명}}} 반환 """
+        dic = dict(셀=dict(), 선정=dict(), 탐색=DIC_탐색, 셀수=N_셀)
         if os.path.exists(self.path_종목행렬) and not rebuild:
             try:
                 dic_저장 = pd.read_pickle(self.path_종목행렬)
-                if dic_저장.get('탐색') == DIC_탐색:
+                # 탐색축이나 셀 구성이 바뀌면 캐시를 버린다 - 폭이 다른 배열이 섞이면 조용히 깨진다
+                if dic_저장.get('탐색') == DIC_탐색 and dic_저장.get('셀수') == N_셀:
                     dic = dic_저장
             except (OSError, EOFError, KeyError, ValueError):
                 pass
 
         li_일자 = li_일자 or self.li_틱일자()
+
+        # 선정 정보 자기치유 - 비어 있는 일자는 매번 다시 읽는다.
+        #   틱이 먼저 쌓이고 백테스팅(=종목선정)이 나중에 도는 날이 있어서, 처음 담을 때
+        #   비었다고 그대로 굳히면 그 하루가 영영 대상 0종목으로 남는다.
+        #   (2026-08-25 실제로 그렇게 굳은 날이 생겨 추가했다)
+        for d in [x for x in li_일자 if x in dic['셀'] and not dic['선정'].get(x)]:
+            df_sel = self._선정종목(d)
+            if df_sel is not None and len(df_sel):
+                dic['선정'][d] = dict(zip(df_sel['종목코드'], df_sel['종목명']))
+                pd.to_pickle(dic, self.path_종목행렬)
+
         li_신규 = [d for d in li_일자 if d not in dic['셀']]
         for d in li_신규:
             df_틱 = self._load_틱(d)
@@ -349,6 +369,80 @@ class 종목별롤링워크포워드(롤링워크포워드):
                               튜닝분건수=dic_건['튜닝분'],
                               하이브리드승=dic_승['하이브리드'], 현행승=dic_승['현행']))
         return dic, li_일자, li_폴드, pd.DataFrame(li_종목행)
+
+    # =================================================================
+    # 세 방식 + 오라클 일자별 집계 (대시보드용)
+    # =================================================================
+    def 평가_세방식(self, rebuild=False, n_학습창=N_학습창, n_조회창=N_조회창):
+        """ 1번 고정 / 2번 롤링 / 3번 종목별 / 오라클 을 같은 행렬 위에서 일자별로 집계
+
+            학습창을 아직 못 채운 초기 구간은 '현행 파라미터로 매매한 것'으로 본다
+            (2번은 앞 n_학습창 거래일, 3번은 출현 이력이 없는 종목·일). 그렇게 두지 않으면
+            방식마다 분모가 달라져 같은 표에 올릴 수 없다.
+
+            반환: (li_일자, {방식: {일자: 집계}}, {일자: {종목코드: (조합번호, 튜닝여부)}}) """
+        dic, li_일자, _ = self.행렬갱신(rebuild=rebuild)
+        # 매매대상이 아직 없는 일자(백테스팅 전)는 뺀다 - 대상 0종목인 하루가 표에 끼면
+        # 손익 0으로 보이지만 실제로는 '아직 모른다'라서 뜻이 다르다
+        li_일자 = [d for d in li_일자 if d in dic['셀'] and dic['선정'].get(d)]
+
+        # --- 일합 행렬 (선정종목만) - 2번 롤링과 일단위 오라클이 쓴다
+        dic_일합 = dict()
+        for d in li_일자:
+            a = np.zeros((len(self.li_조), N_셀))
+            for code in dic['선정'].get(d, dict()):
+                if code in dic['셀'][d]:
+                    a += dic['셀'][d][code]
+            dic_일합[d] = a
+
+        # --- 2번 롤링: 직전 n_학습창 거래일로 조합 하나
+        dic_롤조합 = dict()
+        for n_i, d in enumerate(li_일자):
+            if n_i < n_학습창:
+                dic_롤조합[d] = (self.n_현행, False)
+                continue
+            a = np.stack([dic_일합[p] for p in li_일자[n_i - n_학습창:n_i]])
+            b_유효 = a[:, :, 1].sum(axis=0) >= n_학습창
+            if not b_유효.any():
+                dic_롤조합[d] = (self.n_현행, False)
+                continue
+            a_점수 = np.where(b_유효,
+                            -(a[:, :, 0] < -1e-9).sum(axis=0) * 1e6 + a[:, :, 0].sum(axis=0),
+                            -np.inf)
+            dic_롤조합[d] = (int(np.argmax(a_점수)), True)
+
+        # --- 3번 종목별: 종목마다 자기 출현일로 조합 하나
+        dic_종조합 = dict()
+        for n_i, d in enumerate(li_일자):
+            li_조회 = li_일자[max(0, n_i - n_조회창):n_i]
+            dic_종조합[d] = dict()
+            for code in dic['선정'].get(d, dict()):
+                if code not in dic['셀'][d]:
+                    continue
+                li_출현 = [p for p in li_조회 if code in dic['셀'].get(p, dict())]
+                li_학습 = li_출현[-n_학습창:]
+                n_조 = (self._고른조합([dic['셀'][p][code] for p in li_학습]) if li_학습 else None)
+                dic_종조합[d][code] = ((self.n_현행, False) if n_조 is None else (n_조, True))
+
+        dic_일별 = {m: dict() for m in LI_방식}
+        for d in li_일자:
+            dic_x = {m: dict(손익=0.0, 건수=0, 승=0, 손익1=0.0, 건1=0, 손익2=0.0, 건2=0,
+                             튜닝=0, 대상=0) for m in LI_방식}
+            n_롤, b_롤 = dic_롤조합[d]
+            for code, (n_종, b_종) in dic_종조합[d].items():
+                cell = dic['셀'][d][code]
+                for m, n_조 in [('고정', self.n_현행), ('롤링', n_롤), ('종목별', n_종),
+                               ('오라클', int(np.argmax(cell[:, 0])))]:
+                    x, r = dic_x[m], cell[n_조]
+                    x['손익'] += float(r[0]); x['건수'] += int(r[1]); x['승'] += int(r[2])
+                    x['손익1'] += float(r[4]); x['건1'] += int(r[5])
+                    x['손익2'] += float(r[6]); x['건2'] += int(r[7])
+                    x['대상'] += 1
+                dic_x['종목별']['튜닝'] += 1 if b_종 else 0
+            dic_x['롤링']['튜닝'] = dic_x['롤링']['대상'] if b_롤 else 0
+            for m in LI_방식:
+                dic_일별[m][d] = dic_x[m]
+        return li_일자, dic_일별, dic_종조합
 
     # =================================================================
     # 대조군: 전체 롤링 (하루 단위로 조합 하나 → 전 종목 적용)
