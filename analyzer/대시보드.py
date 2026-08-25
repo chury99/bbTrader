@@ -83,8 +83,13 @@ padding:14px 12px 8px;margin:14px 0;}
 .chd{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:baseline;margin-bottom:6px;
 padding:0 4px;}
 .chd b{font-size:15px;color:#e6edf3;}
-.lg{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--mu);font-size:12px;
-padding:5px 4px 13px;}
+.lg{display:flex;flex-wrap:wrap;gap:4px 18px;color:var(--mu);font-size:12px;
+padding:6px 4px 14px;}
+.lg .li{display:inline-flex;align-items:flex-start;gap:6px;max-width:100%;}
+.lg b{color:#c9d1d9;font-weight:600;white-space:nowrap;}
+.lg .df{color:#6e7681;}
+.lg .tag{flex:0 0 auto;margin-top:5px;}
+.lg .tag.ln{margin:9px 0 0;}
 .tag.ln{width:15px;height:0;border-top:2px dashed;border-radius:0;background:none !important;
 margin-bottom:3px;}
 """
@@ -228,23 +233,40 @@ class Dashboard:
     # =================================================================
     # 구획 3 — 당일 지표 변화
     # =================================================================
-    # 패널 정의: (제목, 높이, 좌축 계열, 우축 계열, 현행 문턱, 강건스케일)
-    #   강건스케일 - 상하위 2%를 빼고 눈금을 잡는다. 장 시작 몇 초는 누적 분모가 거의 0이라
+    # 계열 설명 - 범례에 이름만 적어 두면 무슨 값인지 되짚어야 한다. 정의를 같이 적는다.
+    #   매수량·매도량·건수는 전부 단주(|거래량| <= 2) 제외 기준이다.
+    #   범례는 두 줄을 넘지 않아야 하므로 수식만 적고 해석은 붙이지 않는다.
+    DIC_계열설명 = {
+        'price': '1초봉 종가',
+        'stop': 'max(손절가, 고점x(1-트레일%))',
+        '체결률10': '10초 매수건수 ÷ 10',
+        '순매수10': '10초 (매수-매도) ÷ (매수+매도)',
+        '체결강도롤링': '60초 매수량 ÷ 매도량 x100',
+        '체결강도누적': '누계 매수량 ÷ 매도량 x100',
+        '체결횟수강도롤링': '60초 매수건수 ÷ 매도건수 x100',
+        '매수횟수5': '초당 매수건수의 5초 이동평균',
+        '단위비': '매수 1건 크기 ÷ 매도 1건 크기',
+    }
+    # 패널 정의: (제목, 높이, 좌축 계열, 우축 계열, 기준선, 강건스케일, 기준선 범례)
+    #   강건스케일 - 상하위 1%를 빼고 눈금을 잡는다. 장 시작 몇 초는 누적 분모가 거의 0이라
     #   체결강도가 수천까지 튀는데, 그 한 점 때문에 나머지 전 구간이 납작해진다.
     #   대신 눈금 밖으로 나간 선은 패널 경계에서 잘라 그린다(clip).
     LI_패널 = [
         ('가격', 172, [('price', '#e6edf3', 2.0, '가격'), ('stop', '#d29922', 1.4, '스탑')],
-         None, [], False),
+         None, [], False, None),
         ('진입 성분 (지금 쓰는 축)', 118, [('체결률10', '#39c5cf', 1.6, '체결률(10초)')],
          [('순매수10', '#a371f7', 1.6, '순매수비율(10초)')],
-         [('체결률10', None), ('순매수10', None)], True),
+         [('체결률10', None), ('순매수10', None)], True,
+         ('현행 문턱', '체결률 {체결률10:.1f} · 순매수 {순매수10:.2f} — 둘 다 충족')),
         ('강도 계열 (미사용 후보)', 118,
          [('체결강도롤링', '#d29922', 1.6, '체결강도(60초)'),
           ('체결강도누적', '#8b949e', 1.3, '체결강도(누적)'),
           ('체결횟수강도롤링', '#39c5cf', 1.4, '체결횟수강도(60초)')], None,
-         [('체결강도롤링', 100.0)], True),
+         [('체결강도롤링', 100.0)], True,
+         ('기준선 100', '매수량 = 매도량')),
         ('체결 크기·빈도 (미사용 후보)', 118, [('매수횟수5', '#a371f7', 1.6, '매수횟수(5초평균)')],
-         [('단위비', '#d29922', 1.6, '단위매수÷매도')], [('단위비', 1.0)], True),
+         [('단위비', '#d29922', 1.6, '단위매수÷매도')], [('단위비', 1.0)], True,
+         ('기준선 1.0', '매수 1건 = 매도 1건 크기')),
     ]
     LI_지표 = ['체결률10', '순매수10', '체결강도롤링', '체결강도누적', '체결횟수강도롤링',
              '매수횟수5', '단위비', '이격률']
@@ -368,13 +390,15 @@ class Dashboard:
 
     @staticmethod
     def _s_범례(li_항목):
-        """ 패널 바로 밑에 그 패널의 계열만 나열한다 (그래프 넷을 다 보고 나서 찾지 않도록).
+        """ 패널 바로 밑에 그 패널의 계열만, 이름과 정의를 같이 나열한다.
             SVG 밖 HTML 로 두는 이유는 화면이 좁아져도 글자가 작아지지 않고 줄바꿈되기 때문이다. """
-        return ('<div class="lg">' + ''.join(
-            (f'<span><span class="tag ln" style="border-color:{s_색}"></span>{s_라벨}</span>'
-             if b_점선 else
-             f'<span><span class="tag" style="background:{s_색}"></span>{s_라벨}</span>')
-            for s_색, s_라벨, b_점선 in li_항목) + '</div>')
+        li = list()
+        for s_색, s_라벨, b_점선, s_설명 in li_항목:
+            s_표 = (f'<span class="tag ln" style="border-color:{s_색}"></span>' if b_점선
+                   else f'<span class="tag" style="background:{s_색}"></span>')
+            s_뒤 = f' <span class="df">{s_설명}</span>' if s_설명 else ''
+            li.append(f'<span class="li">{s_표}<b>{s_라벨}</b>{s_뒤}</span>')
+        return '<div class="lg">' + ''.join(li) + '</div>'
 
     def s_차트(self, dic_x, dic_문턱):
         """ 한 거래의 4단 그래프 (가격 / 진입성분 / 강도계열 / 체결 크기·빈도)
@@ -395,7 +419,8 @@ class Dashboard:
         def n_px(n_t):
             return n_x0 + (n_x1 - n_x0) * (n_t - a_x[0]) / max(1, a_x[-1] - a_x[0])
 
-        for n_p, (s_제목, n_h, li_좌, li_우, li_문턱, b_강건) in enumerate(self.LI_패널):
+        for n_p, (s_제목, n_h, li_좌, li_우, li_문턱, b_강건, t_기준범례) \
+                in enumerate(self.LI_패널):
             b_끝 = n_p == len(self.LI_패널) - 1
             li_문턱 = [(k, dic_문턱.get(k) if v is None else v) for k, v in li_문턱]
             li_문턱 = [(k, v) for k, v in li_문턱 if v is not None]
@@ -430,7 +455,8 @@ class Dashboard:
                                                n_상단, n_h, s_색, n_w,
                                                ' stroke-dasharray="4 3"' if b_점선 else '')
                                   + '</g>')
-                    li_범례.append((s_색, s_라벨 + (' (우축)' if b_우 else ''), b_점선))
+                    li_범례.append((s_색, s_라벨 + (' · 우축' if b_우 else ''), b_점선,
+                                   self.DIC_계열설명.get(s_k, '')))
                 for n_v in li_해당문턱:
                     if t_범위[0] <= n_v <= t_범위[1]:
                         n_py = n_상단 + n_h * (1 - (n_v - t_범위[0]) / (t_범위[1] - t_범위[0]))
@@ -454,10 +480,13 @@ class Dashboard:
                         f'{int(n_t) // 3600:02d}:{int(n_t) % 3600 // 60:02d}:'
                         f'{int(n_t) % 60:02d}</text>')
 
-            if b_문턱있음:
-                li_범례.append(('#3fb950', '현행 문턱', True))
+            if b_문턱있음 and t_기준범례:
+                s_기준라벨, s_기준설명 = t_기준범례
+                li_범례.append(('#3fb950', s_기준라벨, True,
+                              s_기준설명.format(**dic_문턱)))
             if n_p == 0:        # 진입·청산 세로선은 전 패널 공통이라 첫 칸에서만 설명한다
-                li_범례 += [('#3fb950', '진입', False), ('#8b949e', '청산', False)]
+                li_범례 += [('#3fb950', '진입', False, '매수 체결'),
+                          ('#8b949e', '청산', False, '매도 체결')]
             li_블록.append(f'<svg viewBox="0 0 {self.N_폭} {n_높이}" role="img" '
                           f'aria-label="{dic_x["종목명"]} {s_제목}">{"".join(li_svg)}</svg>'
                           + self._s_범례(li_범례))
@@ -486,16 +515,24 @@ class Dashboard:
         dic_문턱 = {'체결률10': float(BT._구간1_체결률), '순매수10': float(BT._구간1_순매수)}
         B.append('<p class="mu">그날 실제로 잡은 거래마다 <b>1초봉 가격과 지표들이 진입 전후로 '
                  '어떻게 움직였는지</b>를 펼쳐 놓은 것이다. 성적을 재는 표가 아니라 '
-                 '<b>"무엇을 더 봤어야 했나"를 찾는 자리</b>다. 초록 세로선이 진입, '
-                 '회색 세로선이 청산이고, 초록 점선은 지금 쓰는 문턱이다.</p>')
+                 '<b>"무엇을 더 봤어야 했나"를 찾는 자리</b>다. 계열 이름 옆에 그 값이 무엇인지 '
+                 '적어 두었다.</p>'
+                 '<p class="note">공통 — 모든 계열은 <b>1초 격자</b> 위에서 계산하고, '
+                 f'매수량·매도량·체결건수는 전부 <b>단주(|거래량| ≤ {BT._T_단주}) 제외</b> 기준이다'
+                 '(가격·고가는 전체 틱을 쓴다). 창 표기는 그 초까지의 뒤돌아보는 길이다 — '
+                 '"60초"면 직전 60초 합, "누적"이면 장 시작부터의 누계다. '
+                 '가로축은 09:00부터 청산 2분 30초 뒤까지이고, 세로 눈금은 앞 1분을 빼고 '
+                 '상하위 1%를 잘라 잡는다(장 초반 누적 지표가 튀어 나머지가 눌리는 것을 막는다).</p>')
 
         B.append('<h3>진입 순간 스냅샷</h3>')
-        B.append('<div class="tw"><table><thead><tr><th class="l">종목</th><th>진입</th>'
-                 '<th>보유</th><th>수익률</th><th>최대이익</th><th>최대손실</th>'
+        B.append('<div class="tw"><table><thead><tr><th class="l">종목</th><th>구간</th>'
+                 '<th>진입</th><th>보유</th><th>수익률</th><th>최대이익</th><th>최대손실</th>'
                  + ''.join(f'<th>{self.DIC_라벨[k]}</th>' for k in self.LI_표지표)
                  + '</tr></thead><tbody>')
         for x in sorted(li_x, key=lambda v: -v['수익률']):
-            B.append(f'<tr><td class="l">{x["종목명"]}</td><td>{x["매수시점"]}</td>'
+            B.append(f'<tr><td class="l">{x["종목명"]}</td>'
+                     f'<td class="c"><span class="mu">{x["구간"]}</span></td>'
+                     f'<td>{x["매수시점"]}</td>'
                      f'<td>{x["청산"] - x["진입"]}초</td><td>{s_pct(x["수익률"])}</td>'
                      f'<td>{s_pct(x["mfe"])}</td><td>{s_pct(x["mae"])}</td>'
                      + ''.join((f'<td>{x["스냅"][k]:,.2f}</td>'
@@ -515,6 +552,11 @@ class Dashboard:
                      f'단위매수÷매도 <b>{n_승비:,.2f} vs {n_패비:,.2f}</b>였다. '
                      f'표본이 한 자릿수이므로 <b>발견이 아니라 눈에 걸린 것</b>일 뿐이다 — '
                      f'하루치로 축을 넣거나 빼지 않는다.</p>')
+        if any(x['구간'] == '구간2' for x in li_x):
+            B.append('<p class="note">체결률·순매수비율은 <b>구간1 진입에만 쓰는 축</b>이다. '
+                     '구간2 진입에도 같이 찍어 두었는데, 그 값이 문턱을 넘었는지는 '
+                     '구간2 진입과 아무 상관이 없다 — 두 구간이 같은 순간을 어떻게 다르게 '
+                     '보는지 견주라고 남겨 둔 것이다.</p>')
 
         for x in li_x:
             B.append(self.s_차트(x, dic_문턱))
