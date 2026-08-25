@@ -83,14 +83,14 @@ padding:14px 12px 10px;margin:14px 0;}
 .chd{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:baseline;margin-bottom:6px;
 padding:0 4px;}
 .chd b{font-size:15px;color:#e6edf3;}
-.lg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px 22px;
-color:var(--mu);font-size:12px;padding:3px 4px 4px;}
+.lg{display:grid;grid-template-columns:repeat(2,minmax(0,max-content));
+justify-content:start;gap:1px 26px;color:var(--mu);font-size:12px;padding:3px 4px 4px;}
 .lg .li{display:flex;align-items:baseline;gap:6px;min-width:0;}
 .lg b{color:#c9d1d9;font-weight:600;white-space:nowrap;}
 .lg .df{color:#6e7681;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lg .tag{flex:0 0 auto;align-self:center;}
 .lg .tag.ln{align-self:center;margin:0;}
-@media (max-width:560px){.lg{font-size:11px;gap:1px 12px;}}
+@media (max-width:560px){.lg{font-size:11px;gap:1px 14px;}}
 .tag.ln{width:15px;height:0;border-top:2px dashed;border-radius:0;background:none !important;
 margin-bottom:3px;}
 """
@@ -422,7 +422,6 @@ class Dashboard:
 
         for n_p, (s_제목, n_h, li_좌, li_우, li_문턱, b_강건, t_기준범례) \
                 in enumerate(self.LI_패널):
-            b_끝 = n_p == len(self.LI_패널) - 1
             li_문턱 = [(k, dic_문턱.get(k) if v is None else v) for k, v in li_문턱]
             li_문턱 = [(k, v) for k, v in li_문턱 if v is not None]
             s_clip = f'clip_{dic_x["코드"]}_{dic_x["진입"]}_{n_p}'
@@ -432,6 +431,9 @@ class Dashboard:
                       f'{s_제목}</text>'
                       f'<rect x="{n_x0}" y="{n_상단}" width="{n_x1 - n_x0}" height="{n_h}" '
                       f'fill="#0d1117" stroke="#21262d"/>']
+            li_svg += [f'<line x1="{n_x0 + (n_x1 - n_x0) * n_i / 6:.1f}" y1="{n_상단}" '
+                       f'x2="{n_x0 + (n_x1 - n_x0) * n_i / 6:.1f}" y2="{n_상단 + n_h}" '
+                       f'stroke="#21262d" stroke-width="1"/>' for n_i in range(1, 6)]
             li_범례, b_문턱있음 = list(), False
             for b_우, li_계, s_앵커, n_라벨x in [(False, li_좌, 'end', n_x0 - 6),
                                             (True, li_우 or [], 'start', n_x1 + 6)]:
@@ -472,15 +474,18 @@ class Dashboard:
                               f'stroke-width="1.3" opacity=".85"/>')
 
             # 아래 여백 - 눈금 글자가 패널 바닥선에 걸쳐 있어 8px 은 있어야 잘리지 않는다
-            n_높이 = n_상단 + n_h + (24 if b_끝 else 8)
-            if b_끝:                                  # 시간축은 맨 아래 칸에만 (폭이 같아 다 맞는다)
-                for n_i in range(7):
-                    n_t = a_x[0] + (a_x[-1] - a_x[0]) * n_i / 6
-                    li_svg.append(
-                        f'<text x="{n_x0 + (n_x1 - n_x0) * n_i / 6:.1f}" y="{n_높이 - 6}" '
-                        f'text-anchor="middle" fill="#8b949e" font-size="10.5">'
-                        f'{int(n_t) // 3600:02d}:{int(n_t) % 3600 // 60:02d}:'
-                        f'{int(n_t) % 60:02d}</text>')
+            # 시간축은 칸마다 붙인다 - 아래 칸까지 눈을 내려야 시각을 알 수 있으면 읽기 어렵다
+            n_높이 = n_상단 + n_h + 24
+            for n_i in range(7):
+                n_t = a_x[0] + (a_x[-1] - a_x[0]) * n_i / 6
+                n_tx = n_x0 + (n_x1 - n_x0) * n_i / 6
+                # 양 끝은 안쪽으로 붙인다 - 가운데 정렬하면 세로눈금 글자와 겹친다
+                s_앵 = 'start' if n_i == 0 else ('end' if n_i == 6 else 'middle')
+                li_svg.append(
+                    f'<text x="{n_tx:.1f}" y="{n_높이 - 6}" '
+                    f'text-anchor="{s_앵}" fill="#6e7681" font-size="10">'
+                    f'{int(n_t) // 3600:02d}:{int(n_t) % 3600 // 60:02d}:'
+                    f'{int(n_t) % 60:02d}</text>')
 
             if b_문턱있음 and t_기준범례:
                 s_기준라벨, s_기준설명 = t_기준범례
