@@ -19,3 +19,6 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# 작업 지침 (로컬 전용 - 저장소가 공개라 경로 정보를 올리지 않는다)
+CLAUDE.md
